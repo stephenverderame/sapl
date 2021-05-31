@@ -6,9 +6,9 @@ pub enum Tokens {
     Integer(i32),
     Float(f64),
     TString(String),
-    Ignore,
     OpPlus, OpMinus, OpMult, OpDiv, OpMod, OpExp,
     OpLor, OpLand, OpOr, OpAnd,
+    LParen, RParen,
 }
 
 /// Converts an input stream into a deque of tokens
@@ -36,6 +36,7 @@ enum TokenizerStates {
     ReadString(u8),
     ReadOperator,
     ReadId,
+    ReadLang,
 }
 
 struct TokenizerFSM {
@@ -58,7 +59,8 @@ impl TokenizerFSM {
         let buf_line = TokenizerFSM::add_eof_to_buf(line);
         for c in buf_line {
             let (next_state, tok) = self.state_transition(c);
-            self.append_to_token_stream(&mut d, tok, next_state, c as char);
+            self.append_to_token_stream(&mut d, tok);                    
+            self.append_char_to_input(c, next_state);
             self.state = next_state;
             if self.state == TokenizerStates::ReadError { 
                 return Err(Error::from(ErrorKind::NotFound)); 
@@ -74,17 +76,20 @@ impl TokenizerFSM {
         b
     }
     
-    /// Gets a `(next_state, token)` pair that occurs from
+    /// Gets a `(next_state, token)` tuple that occurs from
     /// reading `input` from the current FSM state
+    /// `next_state` is the next FSM state
+    /// `token` is the token to append to the token stream or `None`
     fn state_transition(&self, input: u8) 
         -> (TokenizerStates, Option<Tokens>) 
     {
         match &self.state {
-            TokenizerStates::Init | TokenizerStates::ReadMinus 
-                if input.is_ascii_digit() => (TokenizerStates::ReadInt, None),
+            TokenizerStates::ReadMinus | TokenizerStates::Init
+                if input.is_ascii_digit() => 
+                    (TokenizerStates::ReadInt, None),
 
             TokenizerStates::Init if input == b'\'' || input == b'"'
-                => (TokenizerStates::ReadString(input), Some(Tokens::Ignore)),
+                => (TokenizerStates::ReadString(input), None),
 
             TokenizerStates::Init | TokenizerStates::ReadMinus 
             | TokenizerStates::ReadInt if input == b'.' 
@@ -94,7 +99,7 @@ impl TokenizerFSM {
                 => (TokenizerStates::ReadMinus, None),
 
             TokenizerStates::ReadInt | TokenizerStates::ReadFloat
-                if input.is_ascii_digit() =>  (self.state, None),
+                if input.is_ascii_digit() => (self.state, None),
 
             TokenizerStates::ReadString(delim) if input == *delim
                 => (TokenizerStates::Init, self.done_parse_token()),
@@ -106,45 +111,83 @@ impl TokenizerFSM {
                 if TokenizerFSM::is_op_symbol(input) => 
                     (TokenizerStates::ReadOperator, None),
 
-            TokenizerStates::ReadOperator | TokenizerStates::ReadMinus 
-                if !TokenizerFSM::is_op_symbol(input) => 
-                    (TokenizerStates::Init, self.done_parse_token()),
+            TokenizerStates::ReadLang => 
+                (TokenizerFSM::state_of_input(input), self.done_parse_token()),
+
+            _ if TokenizerFSM::is_lang_symbol(input) =>
+                (TokenizerStates::ReadLang, self.done_parse_token()),
             
             _ if input.is_ascii_whitespace() => 
                 (TokenizerStates::Init, self.done_parse_token()),
 
+            TokenizerStates::ReadOperator | TokenizerStates::ReadMinus 
+                if !TokenizerFSM::is_op_symbol(input) => 
+                    (TokenizerFSM::state_of_input(input), self.done_parse_token()),
+
             TokenizerStates::ReadInt | TokenizerStates::ReadFloat 
-                if !input.is_ascii_digit() 
-                => (TokenizerStates::ReadError, None),             
+                if (TokenizerFSM::is_op_symbol(input) 
+                || TokenizerFSM::is_lang_symbol(input)) && input != b'.' => 
+                    (TokenizerFSM::state_of_input(input), self.done_parse_token()),
 
             _ => panic!("Unknown state transition: {:?} to {}", &self.state, input as char),
+        }
+    }
+
+    /// Gets the next state based on `c`
+    /// Used when a state has multiple possible transitions
+    fn state_of_input(c: u8) -> TokenizerStates {
+        match c {
+            s if s.is_ascii_digit() => TokenizerStates::ReadInt,
+            b'.' => TokenizerStates::ReadFloat,
+            b'-' => TokenizerStates::ReadMinus,
+            b'\'' => TokenizerStates::ReadString(b'\''),
+            b'"' => TokenizerStates::ReadString(b'"'),
+            s if s.is_ascii_whitespace() => TokenizerStates::Init,
+            s if TokenizerFSM::is_lang_symbol(s) => TokenizerStates::ReadLang,
+            s if TokenizerFSM::is_op_symbol(s) => TokenizerStates::ReadOperator,
+            s => panic!("Unknown symbol {}", s as char),
         }
     }
 
     /// Appends `tok` to `stream` if `tok` is not empty or the Ignore token
     /// If a token is appended, the internal token buffer is cleared
     fn append_to_token_stream(&mut self, stream: &mut VecDeque<Tokens>, 
-        tok: Option<Tokens>, next_state: TokenizerStates, input: char)
+        tok: Option<Tokens>)
     {
         if let Some(x) = tok {
-            if x != Tokens::Ignore { stream.push_back(x); }
             self.input.clear();
-            self.state = TokenizerStates::Init;
-        } else {
-            self.input.push(input);
+            stream.push_back(x)    
+        } 
+
+    }
+
+    /// Appends `c` to the input buffer it it is not a whitespace
+    /// or string delimiter
+    fn append_char_to_input(&mut self, c: u8, next_state: TokenizerStates) {
+        match (self.state, next_state) {
+            (TokenizerStates::ReadString(delim), _) |
+            (_, TokenizerStates::ReadString(delim)) if delim == c => (),
+            (TokenizerStates::ReadString(_), _) |
+            (_, TokenizerStates::ReadString(_)) =>
+                self.input.push(c as char),
+            _ if !c.is_ascii_whitespace() =>
+                self.input.push(c as char),
+            _ => (),
         }
     }
 
     /// Signals that a whitespace character has occurred and 
     /// an entire token has been read
     fn done_parse_token(&self) -> Option<Tokens> {
+        //self.input = self.input.trim_left().to_owned();
         match &self.state {
             TokenizerStates::ReadInt => self.parse_cur_as_int(),
             TokenizerStates::ReadFloat => self.parse_cur_as_float(),
             TokenizerStates::ReadString(_) => self.parse_cur_as_str(),
             TokenizerStates::ReadOperator 
             | TokenizerStates::ReadMinus => self.parse_cur_as_op(),
-            TokenizerStates::Init => Some(Tokens::Ignore),
+            TokenizerStates::ReadLang => self.parse_cur_as_lang(),
+            TokenizerStates::Init => None,
             _ => panic!("Error converting '{}' to token in state {:?}", self.input, self.state),
         }
     }
@@ -191,6 +234,15 @@ impl TokenizerFSM {
         }
     }
 
+    /// True if `c` is a language symbol such as `()` or `{}`
+    fn is_lang_symbol(c: u8) -> bool {
+        match c {
+            b'(' | b')' | b'{' | b'}'
+            | b';' => true,
+            _ => false,
+        }
+    }
+
     /// Parses the current token buffer as an operator
     fn parse_cur_as_op(&self) -> Option<Tokens> {
         match &self.input[..] {
@@ -206,6 +258,21 @@ impl TokenizerFSM {
             "&" => Some(Tokens::OpAnd),
             _ => panic!("'{}' is not a recognized operator", self.input),
         }
+    }
+
+    fn parse_cur_as_lang(&self) -> Option<Tokens> {
+        match &self.input[..] {
+            "(" => Some(Tokens::LParen),
+            ")" => Some(Tokens::RParen),
+            _ => panic!("\"{}\" is not a recognized language symbol", self.input),
+        }
+    }
+
+    fn input_is_whitespace(&self) -> bool {
+        self.input.is_empty() || self.input.find(
+            |c: char| -> bool {
+                !c.is_ascii_whitespace()
+            }).is_none()
     }
     
 }
