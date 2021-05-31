@@ -1,6 +1,6 @@
 S -> E
 
-E ->  L | BOP | (E)
-BOP -> L op L | L op BOP | L op (E)
+E ->  L | (E) | E op BOP
+BOP -> E | BOP op BOP
 L -> String | Float | Int
 op -> + | / | % | * ...

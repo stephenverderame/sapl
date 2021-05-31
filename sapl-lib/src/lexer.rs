@@ -6,8 +6,10 @@ pub enum Tokens {
     Integer(i32),
     Float(f64),
     TString(String),
+    Bool(bool),
     OpPlus, OpMinus, OpMult, OpDiv, OpMod, OpExp,
-    OpLor, OpLand, OpOr, OpAnd,
+    OpLor, OpLand, OpOr, OpAnd, OpEq, OpLt, OpGt, 
+    OpLeq, OpGeq, OpNeq,
     LParen, RParen,
 }
 
@@ -35,8 +37,8 @@ enum TokenizerStates {
     ReadMinus,
     ReadString(u8),
     ReadOperator,
-    ReadId,
     ReadLang,
+    ReadId,
 }
 
 struct TokenizerFSM {
@@ -101,6 +103,9 @@ impl TokenizerFSM {
             TokenizerStates::ReadInt | TokenizerStates::ReadFloat
                 if input.is_ascii_digit() => (self.state, None),
 
+            TokenizerStates::ReadFloat if input == b'.' =>
+                (TokenizerStates::ReadError, None),
+
             TokenizerStates::ReadString(delim) if input == *delim
                 => (TokenizerStates::Init, self.done_parse_token()),
 
@@ -125,9 +130,16 @@ impl TokenizerFSM {
                     (TokenizerFSM::state_of_input(input), self.done_parse_token()),
 
             TokenizerStates::ReadInt | TokenizerStates::ReadFloat 
-                if (TokenizerFSM::is_op_symbol(input) 
-                || TokenizerFSM::is_lang_symbol(input)) && input != b'.' => 
+            | TokenizerStates::ReadId
+                if TokenizerFSM::is_op_symbol(input) || 
+                    TokenizerFSM::is_lang_symbol(input) => 
                     (TokenizerFSM::state_of_input(input), self.done_parse_token()),
+            
+            TokenizerStates::ReadId if TokenizerFSM::is_name_character(input) =>
+                (TokenizerStates::ReadId, None),
+
+            _ if TokenizerFSM::is_name_character(input) =>
+                (TokenizerStates::ReadId, self.done_parse_token()),
 
             _ => panic!("Unknown state transition: {:?} to {}", &self.state, input as char),
         }
@@ -145,6 +157,7 @@ impl TokenizerFSM {
             s if s.is_ascii_whitespace() => TokenizerStates::Init,
             s if TokenizerFSM::is_lang_symbol(s) => TokenizerStates::ReadLang,
             s if TokenizerFSM::is_op_symbol(s) => TokenizerStates::ReadOperator,
+            s if TokenizerFSM::is_name_character(s) => TokenizerStates::ReadId,
             s => panic!("Unknown symbol {}", s as char),
         }
     }
@@ -188,6 +201,7 @@ impl TokenizerFSM {
             | TokenizerStates::ReadMinus => self.parse_cur_as_op(),
             TokenizerStates::ReadLang => self.parse_cur_as_lang(),
             TokenizerStates::Init => None,
+            TokenizerStates::ReadId => self.parse_cur_as_name(),
             _ => panic!("Error converting '{}' to token in state {:?}", self.input, self.state),
         }
     }
@@ -256,6 +270,12 @@ impl TokenizerFSM {
             "||" => Some(Tokens::OpLor),
             "|" => Some(Tokens::OpOr),
             "&" => Some(Tokens::OpAnd),
+            "<" => Some(Tokens::OpLt),
+            ">" => Some(Tokens::OpGt),
+            "<=" => Some(Tokens::OpLeq),
+            ">=" => Some(Tokens::OpGeq),
+            "==" => Some(Tokens::OpEq),
+            "!=" => Some(Tokens::OpNeq),
             _ => panic!("'{}' is not a recognized operator", self.input),
         }
     }
@@ -268,11 +288,16 @@ impl TokenizerFSM {
         }
     }
 
-    fn input_is_whitespace(&self) -> bool {
-        self.input.is_empty() || self.input.find(
-            |c: char| -> bool {
-                !c.is_ascii_whitespace()
-            }).is_none()
+    fn is_name_character(c: u8) -> bool {
+        c.is_ascii_alphanumeric() || c == b'_'
+    }
+
+    fn parse_cur_as_name(&self) -> Option<Tokens> {
+        match &self.input[..] {
+            "true" => Some(Tokens::Bool(true)),
+            "false" => Some(Tokens::Bool(false)),
+            _ => panic!("Unknown name {}", self.input),
+        }
     }
     
 }

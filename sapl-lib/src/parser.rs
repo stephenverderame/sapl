@@ -4,7 +4,8 @@ use std::collections::VecDeque;
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub enum Op {
     Plus, Mult, Div, Mod, Sub, Exp,
-    Land, Lor, And, Or,
+    Land, Lor, And, Or, Lt, Gt, Eq,
+    Neq, Leq, Geq,
 }
 
 #[derive(PartialEq, Debug)]
@@ -12,6 +13,7 @@ pub enum Ast {
     VInt(i32),
     VFloat(f64),
     VStr(String),
+    VBool(bool),
     Bop(Box<Ast>, Op, Box<Ast>),
 }
 
@@ -21,7 +23,7 @@ pub fn parse(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
         Some(x @ Tokens::Integer(_)) | Some(x @ Tokens::Float(_))
         | Some(x @ Tokens::TString(_)) | Some(x @ Tokens::LParen)
             => parse_expr(x, stream),
-        x => Err("unknown parse".to_owned()),
+        _ => Err("unknown parse".to_owned()),
     }
 }
 
@@ -43,6 +45,7 @@ fn tok_to_val(tok: Tokens) -> Result<Ast, String> {
         Tokens::Integer(x) => Ok(Ast::VInt(x)),
         Tokens::Float(x) => Ok(Ast::VFloat(x)),
         Tokens::TString(x) => Ok(Ast::VStr(x)),
+        Tokens::Bool(x) => Ok(Ast::VBool(x)),
         _ => Err(format!("{:?} is not a value", tok)),
     }
 }
@@ -54,27 +57,46 @@ fn parse_bop(left: Ast, op: Tokens, stream: &mut VecDeque<Tokens>)
     -> Result<Ast, String> 
 {
     let ast_op = tok_to_op(&op);
-    let right = match stream.pop_front() {
-        Some(Tokens::LParen) => parse_expr(Tokens::LParen, stream).unwrap(),
-        Some(x) => tok_to_val(x).unwrap(),
-        _ => panic!("Bop needs right branch!"),
-    };
+    match parse_bop_right(stream) {
+        Ok(ast) => 
+            parse_bop_continuation(left, ast_op, ast, stream),
+        err => err,
+    }
+    
+
+}
+
+/// Parses the right productions of a BOP (either `L` or `(E)`)
+fn parse_bop_right(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
+    match stream.pop_front() {
+        Some(Tokens::LParen) => parse_expr(Tokens::LParen, stream),
+        Some(x) => tok_to_val(x),
+        _ => Err("Bop needs right branch".to_owned()),
+    }
+}
+
+/// Checks if the BOP continues (more bops) and if so extends the Ast up or down
+/// depending on the precedence between `op` and the next op
+/// If Bop ends, returns `Bop(left, op, right)`
+fn parse_bop_continuation(left: Ast, op: Op, right: Ast, stream: &mut VecDeque<Tokens>) 
+    -> Result<Ast, String> 
+{
     match stream.front() {
         Some(x) if tok_is_bop(x) => {
-            let tok2 = stream.pop_front().unwrap();
+            let tok2 = stream.pop_front().unwrap(); // cannot panic
             let op2 = tok_to_op(&tok2);
-            if is_lower_precedence(ast_op, op2) {
-                Ok(Ast::Bop(Box::new(left), ast_op, 
-                    Box::new(parse_bop(right, tok2, stream)
-                    .expect("Bop needs valid right branch"))))
+            if is_lower_precedence(op, op2) {
+                let new_right = parse_bop(right, tok2, stream);
+                if let Ok(bop) = new_right {
+                    Ok(Ast::Bop(Box::new(left), op, Box::new(bop)))
+                } else {new_right}
             } else {
-                parse_bop(Ast::Bop(Box::new(left), ast_op, Box::new(right)), 
+                parse_bop(Ast::Bop(Box::new(left), op, Box::new(right)), 
                     tok2, stream)
             }
         },
-        _ => Ok(Ast::Bop(Box::new(left), ast_op, Box::new(right)))
+        _ => Ok(Ast::Bop(Box::new(left), op, Box::new(right)))
     }
-
 }
 
 /// True if `a` has a higher precedence than `b`
@@ -85,6 +107,7 @@ fn is_lower_precedence(a: Op, b: Op) -> bool {
             Op::Exp => 6,
             Op::Mult | Op::Mod | Op::Div | Op::And => 5,
             Op::Plus | Op::Sub | Op::Or => 4,
+            Op::Eq | Op::Neq | Op::Leq | Op::Geq | Op::Lt | Op::Gt => 3,
             Op::Land => 1,
             Op::Lor => 0,
         }
@@ -104,32 +127,47 @@ fn tok_to_op(tok: &Tokens) -> Op {
         Tokens::OpExp => Op::Exp,
         Tokens::OpLor => Op::Lor,
         Tokens::OpLand => Op::Land,
+        Tokens::OpGeq => Op::Geq,
+        Tokens::OpGt => Op::Gt,
+        Tokens::OpLt => Op::Lt,
+        Tokens::OpLeq => Op::Leq,
+        Tokens::OpEq => Op::Eq,
+        Tokens::OpNeq => Op::Neq,
         _ => panic!("Op unimplemented")
     }
 }
 
 /// Parses an arithmetic expression
 fn parse_expr(tok: Tokens, stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
-    let left_tree = 
-    if let Tokens::LParen = tok {
-        // (E) production
-        let expr = parse_expr(stream.pop_front().unwrap(), stream);
-        if let Ok(ast) = expr {
-            match stream.pop_front() {
-                Some(Tokens::RParen) => Some(Ok(ast)),
-                _ => return Err("Missing closing parenthesis".to_owned()),
-            }
-        } else {Some(expr)}
-    } else {None};
+    let left = parse_expr_left(tok, stream);
 
-    let left = if left_tree.is_some() { left_tree.unwrap() }
-    else { tok_to_val(tok) };
-
-    match stream.pop_front() {
-        Some(x) if tok_is_bop(&x) =>
-            parse_bop(left.unwrap(), x, stream),
-            // L op E production
-        None => left, // L production
-        _ => Err("Unknown expr".to_owned()),
+    match stream.front() {
+        Some(x) if tok_is_bop(x) =>
+            parse_bop(left.unwrap(), stream.pop_front().unwrap(), stream),
+        Some(x) if *x == Tokens::RParen =>
+            left,
+        None => left,
+        x => Err(format!("Unknown token {:?} in expr with left as {:?}", x, left)),
     }
+}
+
+/// Parses the (E) or L productions of an expr
+fn parse_expr_left(tok: Tokens, stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
+    match tok {
+        Tokens::LParen => parse_paren_expr(stream),
+        _ => tok_to_val(tok),
+    }
+}
+
+/// Parses the (E) productions
+/// Requires `tok` is `LParen`
+fn parse_paren_expr(stream: &mut VecDeque<Tokens>) -> Result<Ast, String>
+{
+    let expr = parse_expr(stream.pop_front().unwrap(), stream);
+    if let Ok(ast) = expr {
+        match stream.pop_front() {
+            Some(Tokens::RParen) => Ok(ast),
+            _ => Err("Missing closing parenthesis".to_owned()),
+        }
+    } else {expr}
 }

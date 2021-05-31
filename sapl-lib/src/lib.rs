@@ -2,6 +2,19 @@ mod lexer;
 mod parser;
 mod evaluator;
 
+pub use evaluator::Values;
+use std::io::Read;
+
+pub fn parse_sapl(input: impl Read) -> Result<Values, String> {
+    let mut tokens = lexer::tokenize(input);
+    let ast = parser::parse(&mut tokens);
+    if let Ok(ast) = ast {
+        evaluator::eval(ast)
+    } else {
+        Err(ast.unwrap_err())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::lexer;
@@ -84,11 +97,24 @@ mod tests {
                 Tokens::OpPlus, Tokens::Integer(5), Tokens::RParen,
                 Tokens::OpMult, Tokens::LParen, Tokens::Integer(3),
                 Tokens::OpMinus, Tokens::Integer(2), Tokens::RParen]);
+
+        tokens = lexer::tokenize("(((30)))".as_bytes());
+        assert_toks_eq(&tokens, vec![Tokens::LParen, Tokens::LParen,
+            Tokens::LParen, Tokens::Integer(30), Tokens::RParen,
+            Tokens::RParen, Tokens::RParen]);
+    }
+
+    #[test]
+    fn lex_name_test() {
+        let toks = lexer::tokenize("true || false&&true".as_bytes());
+        assert_toks_eq(&toks, vec![Tokens::Bool(true),
+            Tokens::OpLor, Tokens::Bool(false), Tokens::OpLand,
+            Tokens::Bool(true)]);
     }
 
     #[test]
     fn literal_stream_test() {
-        let mut tokens = lexer::tokenize("134     'Cat'  -10.5".as_bytes());
+        let tokens = lexer::tokenize("134     'Cat'  -10.5".as_bytes());
         assert_toks_eq(&tokens, vec![Tokens::Integer(134),
             Tokens::TString("Cat".to_owned()), Tokens::Float(-10.5)])
     }
@@ -96,13 +122,13 @@ mod tests {
     #[test]
     #[should_panic]
     fn multiple_decimal_pts() {
-        let mut tokens = lexer::tokenize("10.0.0".as_bytes());
+        lexer::tokenize("10.0.0".as_bytes());
     }
 
     #[test]
     #[should_panic]
     fn multiple_minus_sign() {
-        let mut tokens = lexer::tokenize("--10".as_bytes());
+        lexer::tokenize("--10".as_bytes());
     }
 
     #[test]
@@ -125,10 +151,15 @@ mod tests {
         assert_val_eq("10 ** 3 / 3", Values::Int(333));
         assert_val_eq("'Hello ' + 'World'", Values::Str("Hello World".to_owned()));
         assert_val_eq("42", Values::Int(42));
+        assert_val_eq("42 - -20", Values::Int(62));
     }
 
     #[test]
     fn parenthesis_eval() {
         assert_val_eq("(20 + 20) * 10", Values::Int(400));
+        assert_val_eq("2 ** (4 + 4)", Values::Int(256));
+        assert_val_eq("(((30)))", Values::Int(30));
+        assert_val_eq("(30 - 5) / (10 + 5.0)", Values::Float(25.0 / 15.0));
+        assert_val_eq("'Hello ' + (4000 + 410 * 2)", Values::Str("Hello 4820".to_owned()));
     }
 }

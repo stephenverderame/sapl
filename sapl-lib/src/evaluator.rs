@@ -50,7 +50,8 @@ fn perform_bop(vleft: Values, op: Op, vright: Values) -> Result<Values, String> 
         (Values::Float(x), Op::Exp, Values::Float(y)) => 
             Ok(Values::Float(f64::powf(x, y))),
         (Values::Str(x), Op::Plus, Values::Str(y)) => Ok(Values::Str(x + &y)),
-        (x, op, y) => Err(format!("'{:?} {:?} {:?}' is an invalid Bop or invalid arguments", x, op, y))
+        (x, op, y) => 
+            Err(format!("'{:?} {:?} {:?}' is an invalid Bop or invalid arguments", x, op, y))
     }
 }
 
