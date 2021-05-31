@@ -19,10 +19,11 @@ pub enum Ast {
 
 /// Parses a stream of tokens `stream` into an Abstract Syntax Tree
 pub fn parse(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
-    match stream.pop_front() {
-        Some(x @ Tokens::Integer(_)) | Some(x @ Tokens::Float(_))
-        | Some(x @ Tokens::TString(_)) | Some(x @ Tokens::LParen)
-            => parse_expr(x, stream),
+    match stream.front() {
+        Some(Tokens::Integer(_)) | Some(Tokens::Float(_))
+        | Some(Tokens::TString(_)) | Some(Tokens::LParen)
+        | Some(Tokens::Bool(_))
+            => parse_expr(stream),
         _ => Err("unknown parse".to_owned()),
     }
 }
@@ -37,6 +38,16 @@ fn tok_is_bop(tok: &Tokens) -> bool {
         | Tokens::OpLeq | Tokens::OpEq | Tokens::OpLt 
         | Tokens::OpNeq | Tokens::OpGeq | Tokens::OpGt
         => true,
+        _ => false,
+    }
+}
+
+/// True if `tok` is a value token
+fn tok_is_val(tok: &Tokens) -> bool {
+    match tok {
+        Tokens::Integer(_) | Tokens::Bool(_)
+        | Tokens::TString(_) | Tokens::Float(_) =>
+            true,
         _ => false,
     }
 }
@@ -55,97 +66,94 @@ fn tok_to_val(tok: Tokens) -> Result<Ast, String> {
 /// Parses a binary operator
 /// `left` is the left child of the operator or None
 /// Requires `op` is a binary operator token
-fn parse_bop(left: Ast, op: Tokens, stream: &mut VecDeque<Tokens>) 
+fn parse_bop(left: Ast, parent: Option<i32>, stream: &mut VecDeque<Tokens>) 
     -> Result<Ast, String> 
 {
-    let ast_op = tok_to_op(&op);
-    match parse_bop_right(stream) {
-        Ok(ast) => 
-            parse_bop_continuation(left, ast_op, ast, stream),
-        err => err,
+    let mut res : Result<Ast, String> = Ok(left);
+    while let Some(op) = tok_to_op(stream.front().unwrap_or(&Tokens::RParen)) {
+        if let Err(_) = res { break; }
+        if let Some(p) = parent {
+            if p >= precedence(op) {
+                // parent must be lower than new op
+                break;
+            }
+        }
+        stream.pop_front().unwrap();
+        let right = parse_bop_right(stream, precedence(op));
+        res = make_bop(res, op, right);
     }
+    res
     
 
 }
 
+/// Constructs a bop `left op right` if both `left` and `right` are `Ok`
+/// Otherwise returns one of the two errors
+fn make_bop(left: Result<Ast, String>, op: Op, right: Result<Ast, String>)
+    -> Result<Ast, String>
+{
+    match (left, right) {
+        (Ok(a), Ok(b)) => 
+            Ok(Ast::Bop(Box::new(a), op, Box::new(b))),
+        (Err(e), _) | (_, Err(e)) =>
+            Err(e),
+    }
+}
+
 /// Parses the right productions of a BOP (either `L` or `(E)`)
-fn parse_bop_right(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
-    match stream.pop_front() {
-        Some(Tokens::LParen) => parse_expr(Tokens::LParen, stream),
-        Some(x) => tok_to_val(x),
+fn parse_bop_right(stream: &mut VecDeque<Tokens>, cur_pres: i32) -> Result<Ast, String> {
+    match stream.front() {
+        Some(Tokens::LParen) => parse_expr(stream),
+        Some(x) if tok_is_val(&x) =>
+            parse_bop(
+                tok_to_val(stream.pop_front().unwrap()).unwrap(), 
+                Some(cur_pres), stream
+            ),
         _ => Err("Bop needs right branch".to_owned()),
     }
 }
-
-/// Checks if the BOP continues (more bops) and if so extends the Ast up or down
-/// depending on the precedence between `op` and the next op
-/// If Bop ends, returns `Bop(left, op, right)`
-fn parse_bop_continuation(left: Ast, op: Op, right: Ast, stream: &mut VecDeque<Tokens>) 
-    -> Result<Ast, String> 
-{
-    match stream.front() {
-        Some(x) if tok_is_bop(x) => {
-            let tok2 = stream.pop_front().unwrap(); // cannot panic
-            let op2 = tok_to_op(&tok2);
-            if is_lower_precedence(op, op2) {
-                let new_right = parse_bop(right, tok2, stream);
-                if let Ok(bop) = new_right {
-                    Ok(Ast::Bop(Box::new(left), op, Box::new(bop)))
-                } else {new_right}
-            } else {
-                parse_bop(Ast::Bop(Box::new(left), op, Box::new(right)), 
-                    tok2, stream)
-            }
-        },
-        _ => Ok(Ast::Bop(Box::new(left), op, Box::new(right)))
+/// Gets the precedence of `op`
+/// Larger number indicates higher priority
+fn precedence(op: Op) -> i32 {
+    match op {
+        Op::Exp => 6,
+        Op::Mult | Op::Mod | Op::Div | Op::And => 5,
+        Op::Plus | Op::Sub | Op::Or => 4,
+        Op::Eq | Op::Neq | Op::Leq | Op::Geq | Op::Lt | Op::Gt => 3,
+        Op::Land => 2,
+        Op::Lor => 1,
     }
-}
-
-/// True if `a` has a higher precedence than `b`
-/// If true, then `b` should be a child of `a`
-fn is_lower_precedence(a: Op, b: Op) -> bool {
-    let precedence = |op| -> i32 {
-        match op {
-            Op::Exp => 6,
-            Op::Mult | Op::Mod | Op::Div | Op::And => 5,
-            Op::Plus | Op::Sub | Op::Or => 4,
-            Op::Eq | Op::Neq | Op::Leq | Op::Geq | Op::Lt | Op::Gt => 3,
-            Op::Land => 2,
-            Op::Lor => 1,
-        }
-    };
-    precedence(a) < precedence(b)
 }
 
 /// Converts `tok` to an operator
 /// Requires `tok` is a bop token
-fn tok_to_op(tok: &Tokens) -> Op {
+fn tok_to_op(tok: &Tokens) -> Option<Op> {
     match *tok {
-        Tokens::OpMult => Op::Mult,
-        Tokens::OpDiv => Op::Div,
-        Tokens::OpPlus => Op::Plus,
-        Tokens::OpMod => Op::Mod,
-        Tokens::OpMinus => Op::Sub,
-        Tokens::OpExp => Op::Exp,
-        Tokens::OpLor => Op::Lor,
-        Tokens::OpLand => Op::Land,
-        Tokens::OpGeq => Op::Geq,
-        Tokens::OpGt => Op::Gt,
-        Tokens::OpLt => Op::Lt,
-        Tokens::OpLeq => Op::Leq,
-        Tokens::OpEq => Op::Eq,
-        Tokens::OpNeq => Op::Neq,
-        _ => panic!("Op unimplemented")
+        Tokens::OpMult => Some(Op::Mult),
+        Tokens::OpDiv => Some(Op::Div),
+        Tokens::OpPlus => Some(Op::Plus),
+        Tokens::OpMod => Some(Op::Mod),
+        Tokens::OpMinus => Some(Op::Sub),
+        Tokens::OpExp => Some(Op::Exp),
+        Tokens::OpLor => Some(Op::Lor),
+        Tokens::OpLand => Some(Op::Land),
+        Tokens::OpGeq => Some(Op::Geq),
+        Tokens::OpGt => Some(Op::Gt),
+        Tokens::OpLt => Some(Op::Lt),
+        Tokens::OpLeq => Some(Op::Leq),
+        Tokens::OpEq => Some(Op::Eq),
+        Tokens::OpNeq => Some(Op::Neq),
+        _ => None,
     }
 }
 
 /// Parses an arithmetic expression
-fn parse_expr(tok: Tokens, stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
-    let left = parse_expr_left(tok, stream);
+fn parse_expr(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
+    let left = parse_expr_left(stream);
 
     match stream.front() {
         Some(x) if tok_is_bop(x) =>
-            parse_bop(left.unwrap(), stream.pop_front().unwrap(), stream),
+            parse_bop(left.unwrap(), None, stream),
         Some(x) if *x == Tokens::RParen =>
             left,
         None => left,
@@ -154,10 +162,11 @@ fn parse_expr(tok: Tokens, stream: &mut VecDeque<Tokens>) -> Result<Ast, String>
 }
 
 /// Parses the (E) or L productions of an expr
-fn parse_expr_left(tok: Tokens, stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
-    match tok {
-        Tokens::LParen => parse_paren_expr(stream),
-        _ => tok_to_val(tok),
+fn parse_expr_left(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
+    match stream.pop_front() {
+        Some(Tokens::LParen) => parse_paren_expr(stream),
+        Some(tok) => tok_to_val(tok),
+        _ => Err("Expr missing left branch".to_owned()),
     }
 }
 
@@ -165,7 +174,7 @@ fn parse_expr_left(tok: Tokens, stream: &mut VecDeque<Tokens>) -> Result<Ast, St
 /// Requires `tok` is `LParen`
 fn parse_paren_expr(stream: &mut VecDeque<Tokens>) -> Result<Ast, String>
 {
-    let expr = parse_expr(stream.pop_front().unwrap(), stream);
+    let expr = parse_expr(stream);
     if let Ok(ast) = expr {
         match stream.pop_front() {
             Some(Tokens::RParen) => Ok(ast),

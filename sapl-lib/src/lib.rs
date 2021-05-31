@@ -145,11 +145,17 @@ mod tests {
             Ast::Bop(Box::new(Ast::VInt(43)), Op::Leq, Box::new(
                 Ast::Bop(Box::new(Ast::VInt(10)), Op::Mult, Box::new(Ast::VInt(10)))
         )));
-        
+
         assert_parse_str_eq("43 <= 10 * 10 && true", Ast::Bop(
             Box::new(Ast::Bop(Box::new(Ast::VInt(43)), Op::Leq, Box::new(
                 Ast::Bop(Box::new(Ast::VInt(10)), Op::Mult, Box::new(Ast::VInt(10)))
             ))), Op::Land, Box::new(Ast::VBool(true))
+        ));
+
+        assert_parse_str_eq("20 + 3 - 10", Ast::Bop(
+            Box::new(Ast::Bop(Box::new(Ast::VInt(20)), Op::Plus, Box::new(Ast::VInt(3)))),
+            Op::Sub,
+            Box::new(Ast::VInt(10))
         ));
     }
 
@@ -178,5 +184,11 @@ mod tests {
     #[test]
     fn bool_eval() {
         assert_val_eq("43 <= 10 * 10 && 23 == 23", Values::Bool(true));
+        assert_val_eq("10 + 10 - 20 > -5 || false", Values::Bool(true));
+        assert_val_eq("10 ** 3 * 4 == 100", Values::Bool(false));
+        assert_val_eq("4.001 > 2 ** 2", Values::Bool(true));
+        assert_val_eq("'Windows' > 'Doors'", Values::Bool(true));
+        assert_val_eq("'apple' == 'apple' && 'dog' != 'cat'", Values::Bool(true));
+        assert_val_eq("true && false || true", Values::Bool(true));
     }
 }
