@@ -140,6 +140,17 @@ mod tests {
 
         assert_parse_str_eq("10 + 20 * 30", Ast::Bop(Box::new(Ast::VInt(10)),
              Op::Plus, Box::new(Ast::Bop(Box::new(Ast::VInt(20)), Op::Mult, Box::new(Ast::VInt(30))))));
+
+        assert_parse_str_eq("43 <= 10 * 10", 
+            Ast::Bop(Box::new(Ast::VInt(43)), Op::Leq, Box::new(
+                Ast::Bop(Box::new(Ast::VInt(10)), Op::Mult, Box::new(Ast::VInt(10)))
+        )));
+        
+        assert_parse_str_eq("43 <= 10 * 10 && true", Ast::Bop(
+            Box::new(Ast::Bop(Box::new(Ast::VInt(43)), Op::Leq, Box::new(
+                Ast::Bop(Box::new(Ast::VInt(10)), Op::Mult, Box::new(Ast::VInt(10)))
+            ))), Op::Land, Box::new(Ast::VBool(true))
+        ));
     }
 
     #[test]
@@ -152,6 +163,7 @@ mod tests {
         assert_val_eq("'Hello ' + 'World'", Values::Str("Hello World".to_owned()));
         assert_val_eq("42", Values::Int(42));
         assert_val_eq("42 - -20", Values::Int(62));
+        assert_val_eq("10+20-3*4", Values::Int(18));
     }
 
     #[test]
@@ -161,5 +173,10 @@ mod tests {
         assert_val_eq("(((30)))", Values::Int(30));
         assert_val_eq("(30 - 5) / (10 + 5.0)", Values::Float(25.0 / 15.0));
         assert_val_eq("'Hello ' + (4000 + 410 * 2)", Values::Str("Hello 4820".to_owned()));
+    }
+
+    #[test]
+    fn bool_eval() {
+        assert_val_eq("43 <= 10 * 10 && 23 == 23", Values::Bool(true));
     }
 }

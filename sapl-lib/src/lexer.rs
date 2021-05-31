@@ -86,60 +86,51 @@ impl TokenizerFSM {
         -> (TokenizerStates, Option<Tokens>) 
     {
         match &self.state {
-            TokenizerStates::ReadMinus | TokenizerStates::Init
-                if input.is_ascii_digit() => 
-                    (TokenizerStates::ReadInt, None),
+            //lex strings
+            //must be before everything else
+            TokenizerStates::ReadString(delim) if input == *delim => 
+                (TokenizerStates::Init, self.done_parse_token()),
+            TokenizerStates::ReadString(_) => (self.state, None), 
+            _ if input == b'\'' || input == b'"' => 
+                (TokenizerStates::ReadString(input), self.done_parse_token()),
 
-            TokenizerStates::Init if input == b'\'' || input == b'"'
-                => (TokenizerStates::ReadString(input), None),
-
+            // lex numbers
             TokenizerStates::Init | TokenizerStates::ReadMinus 
-            | TokenizerStates::ReadInt if input == b'.' 
-                => (TokenizerStates::ReadFloat, None),
-
-            TokenizerStates::Init if input == b'-' 
-                => (TokenizerStates::ReadMinus, None),
-
-            TokenizerStates::ReadInt | TokenizerStates::ReadFloat
-                if input.is_ascii_digit() => (self.state, None),
-
+            | TokenizerStates::ReadInt if input == b'.' => 
+                (TokenizerStates::ReadFloat, None),
+            TokenizerStates::Init if input == b'-' => 
+                (TokenizerStates::ReadMinus, None),
             TokenizerStates::ReadFloat if input == b'.' =>
                 (TokenizerStates::ReadError, None),
+            TokenizerStates::ReadInt | TokenizerStates::ReadFloat
+                if input.is_ascii_digit() => (self.state, None),
+            TokenizerStates::ReadMinus if input.is_ascii_digit() =>
+                (TokenizerStates::ReadInt, None),
+            _ if input.is_ascii_digit() && self.state != TokenizerStates::ReadId 
+                => (TokenizerStates::ReadInt, self.done_parse_token()),
 
-            TokenizerStates::ReadString(delim) if input == *delim
-                => (TokenizerStates::Init, self.done_parse_token()),
-
-            TokenizerStates::ReadString(_) => (self.state, None), 
-
-            TokenizerStates::Init | TokenizerStates::ReadMinus 
-            | TokenizerStates::ReadOperator
+            // lex ops
+            TokenizerStates::ReadMinus | TokenizerStates::ReadOperator
                 if TokenizerFSM::is_op_symbol(input) => 
                     (TokenizerStates::ReadOperator, None),
+             _ if TokenizerFSM::is_op_symbol(input) =>
+                (TokenizerStates::ReadOperator, self.done_parse_token()),
 
+            //lex lang tokens
             TokenizerStates::ReadLang => 
                 (TokenizerFSM::state_of_input(input), self.done_parse_token()),
-
             _ if TokenizerFSM::is_lang_symbol(input) =>
                 (TokenizerStates::ReadLang, self.done_parse_token()),
-            
-            _ if input.is_ascii_whitespace() => 
-                (TokenizerStates::Init, self.done_parse_token()),
 
-            TokenizerStates::ReadOperator | TokenizerStates::ReadMinus 
-                if !TokenizerFSM::is_op_symbol(input) => 
-                    (TokenizerFSM::state_of_input(input), self.done_parse_token()),
-
-            TokenizerStates::ReadInt | TokenizerStates::ReadFloat 
-            | TokenizerStates::ReadId
-                if TokenizerFSM::is_op_symbol(input) || 
-                    TokenizerFSM::is_lang_symbol(input) => 
-                    (TokenizerFSM::state_of_input(input), self.done_parse_token()),
-            
+            //lex names + keys
+            //must be after numbers
             TokenizerStates::ReadId if TokenizerFSM::is_name_character(input) =>
                 (TokenizerStates::ReadId, None),
-
             _ if TokenizerFSM::is_name_character(input) =>
                 (TokenizerStates::ReadId, self.done_parse_token()),
+            
+            _ if input.is_ascii_whitespace() => 
+                (TokenizerStates::Init, self.done_parse_token()),        
 
             _ => panic!("Unknown state transition: {:?} to {}", &self.state, input as char),
         }

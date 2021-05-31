@@ -34,6 +34,8 @@ fn tok_is_bop(tok: &Tokens) -> bool {
         Tokens::OpMod | Tokens::OpDiv | Tokens::OpPlus
         | Tokens::OpMinus | Tokens::OpOr | Tokens::OpExp
         | Tokens::OpLand | Tokens::OpLor | Tokens::OpMult 
+        | Tokens::OpLeq | Tokens::OpEq | Tokens::OpLt 
+        | Tokens::OpNeq | Tokens::OpGeq | Tokens::OpGt
         => true,
         _ => false,
     }
@@ -108,8 +110,8 @@ fn is_lower_precedence(a: Op, b: Op) -> bool {
             Op::Mult | Op::Mod | Op::Div | Op::And => 5,
             Op::Plus | Op::Sub | Op::Or => 4,
             Op::Eq | Op::Neq | Op::Leq | Op::Geq | Op::Lt | Op::Gt => 3,
-            Op::Land => 1,
-            Op::Lor => 0,
+            Op::Land => 2,
+            Op::Lor => 1,
         }
     };
     precedence(a) < precedence(b)
