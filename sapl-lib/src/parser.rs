@@ -16,15 +16,35 @@ pub enum Ast {
     VBool(bool),
     Bop(Box<Ast>, Op, Box<Ast>),
     If(Box<Ast>, Box<Ast>, Option<Box<Ast>>),
+    Seq(Vec<Box<Ast>>),
+    Let(String, Box<Ast>),
+    Name(String),
 }
 
 /// Parses a stream of tokens `stream` into an Abstract Syntax Tree
 pub fn parse(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
+    let expr =
     match stream.front() {
         Some(x) if tok_is_expr(&x) => 
             parse_expr(stream),
+        Some(x) if tok_is_defn(&x) =>
+            parse_defn(stream),
         _ => Err("unknown parse".to_owned()),
+    };
+    parse_seq(expr, stream)
+}
+
+fn parse_seq(ast: Result<Ast, String>, stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
+    if ast.is_err() || stream.front() != Some(&Tokens::Seq) { return ast; }
+    let ast = ast.unwrap();
+    let mut children = vec![Box::new(ast)];
+    while let Some(Tokens::Seq) = stream.front() {
+        stream.pop_front();
+        let next = parse(stream);
+        if next.is_err() { return next; }
+        children.push(Box::new(next.unwrap()));
     }
+    Ok(Ast::Seq(children))
 }
 
 /// True if `tok` can start an expression
@@ -32,8 +52,16 @@ fn tok_is_expr(tok: &Tokens) -> bool {
     match *tok {
         Tokens::Integer(_) | Tokens::Float(_)
         | Tokens::Bool(_) | Tokens::TString(_)
-        | Tokens::LParen | Tokens::If =>
+        | Tokens::LParen | Tokens::If 
+        | Tokens::Name(_) =>
         true,
+        _ => false,
+    }
+}
+
+fn tok_is_defn(tok: &Tokens) -> bool {
+    match *tok {
+        Tokens::Let => true,
         _ => false,
     }
 }
@@ -56,7 +84,8 @@ fn tok_is_bop(tok: &Tokens) -> bool {
 fn tok_is_val(tok: &Tokens) -> bool {
     match tok {
         Tokens::Integer(_) | Tokens::Bool(_)
-        | Tokens::TString(_) | Tokens::Float(_) =>
+        | Tokens::TString(_) | Tokens::Float(_)
+        | Tokens::Name(_) =>
             true,
         _ => false,
     }
@@ -69,6 +98,7 @@ fn tok_to_val(tok: Tokens) -> Result<Ast, String> {
         Tokens::Float(x) => Ok(Ast::VFloat(x)),
         Tokens::TString(x) => Ok(Ast::VStr(x)),
         Tokens::Bool(x) => Ok(Ast::VBool(x)),
+        Tokens::Name(x) => Ok(Ast::Name(x)),
         _ => Err(format!("{:?} is not a value", tok)),
     }
 }
@@ -164,11 +194,11 @@ fn parse_expr(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
     match stream.front() {
         Some(x) if tok_is_bop(x) =>
             parse_bop(left.unwrap(), None, stream),
-        Some(x) =>
+        Some(_) =>
         //if *x == Tokens::RParen =>
             left,
         None => left,
-        x => Err(format!("Unknown token {:?} in expr with left as {:?}", x, left)),
+        //x => Err(format!("Unknown token {:?} in expr with left as {:?}", x, left)),
     }
 }
 
@@ -203,7 +233,7 @@ fn parse_conditional(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
         (Ok(guard), Some(tok @ Tokens::Colon)) |
         (Ok(guard), Some(tok @ Tokens::LBrace)) => 
             parse_if_body(guard, tok, stream),
-        (Ok(guard), _) => Err("Missing colon or { after If".to_owned()),
+        (Ok(_), _) => Err("Missing colon or { after If".to_owned()),
         (e @ Err(_), _) => e,
     } 
 }
@@ -233,5 +263,25 @@ fn parse_if_body(guard: Ast, opening: Tokens, stream: &mut VecDeque<Tokens>)
             } else { other }
         },
         _ => Ok(Ast::If(Box::new(guard), Box::new(body), None)),
+    }
+}
+
+fn parse_defn(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
+    match stream.pop_front() {
+        Some(Tokens::Let) => parse_let(stream),
+        _ => Err("Not a defn".to_owned()),
+    }
+}
+
+fn parse_let(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
+    if let Some(Tokens::Name(nm)) = stream.pop_front() {
+        if stream.pop_front() != Some(Tokens::OpAssign) { 
+            return Err("Missing '=' in let defn".to_owned())
+        }
+        let val = parse(stream);
+        if val.is_err() { return val; }
+        Ok(Ast::Let(nm, Box::new(val.unwrap())))
+    } else {
+        Err("Missing valid identifier name in let".to_owned())
     }
 }

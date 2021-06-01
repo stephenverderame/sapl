@@ -1,7 +1,10 @@
 use crate::parser::Ast;
 use crate::parser::Op;
 
-#[derive(PartialEq, Debug)]
+mod environment;
+use environment::*;
+
+#[derive(PartialEq, Debug, Clone)]
 pub enum Values {
     Int(i32),
     Float(f64),
@@ -10,23 +13,31 @@ pub enum Values {
     Bool(bool),
 }
 
+
+pub fn evaluate(ast: Ast) -> Result<Values, String> {
+    eval(ast, &mut Scope::new())
+}
+
 /// Evaluates the ast to a value
-pub fn eval(ast: Ast) ->  Result<Values, String> {
+fn eval(ast: Ast, scope: &mut impl Environment) -> Result<Values, String> {
     match ast {
         Ast::VFloat(x) => Ok(Values::Float(x)),
         Ast::VInt(x) => Ok(Values::Int(x)),
         Ast::VStr(x) => Ok(Values::Str(x)),
         Ast::VBool(x) => Ok(Values::Bool(x)),
-        Ast::Bop(left, op, right) => eval_bop(*left, op, *right),
-        Ast::If(guard, body, other) => eval_if(*guard, *body, other),
+        Ast::Name(x) => scope.find(x),
+        Ast::Bop(left, op, right) => eval_bop(*left, op, *right, scope),
+        Ast::If(guard, body, other) => eval_if(*guard, *body, other, scope),
+        Ast::Seq(children) => eval_seq(children, scope),
+        Ast::Let(name, ast) => eval_let(name, *ast, scope),
     }
 }
 
 /// Evaluates each subtree `left` and `right` and if they are both valid
 /// Performs the operation `left op right`
-fn eval_bop(left: Ast, op: Op, right: Ast) -> Result<Values, String> {
-    let left = eval(left);
-    let right = eval(right);
+fn eval_bop(left: Ast, op: Op, right: Ast, scope: &mut impl Environment) -> Result<Values, String> {
+    let left = eval(left, scope);
+    let right = eval(right, scope);
     match (left, right) {
         (Ok(vleft), Ok(vright)) => perform_bop(vleft, op, vright),
         (Err(e), _) | (_, Err(e)) => Err(e),      
@@ -104,15 +115,17 @@ fn promote_args(a: Values, b: Values, op: &Op) -> (Values, Values) {
     }
 }
 
-fn eval_if(guard: Ast, body: Ast, other: Option<Box<Ast>>) -> Result<Values, String> {
-    match eval(guard) {
-        Ok(Values::Bool(true)) => eval(body),
-        Ok(Values::Str(x)) if !x.is_empty() => eval(body),
-        Ok(Values::Int(x)) if x != 0 => eval(body),
+fn eval_if(guard: Ast, body: Ast, other: Option<Box<Ast>>, 
+    scope: &mut impl Environment) -> Result<Values, String> 
+{
+    match eval(guard, scope) {
+        Ok(Values::Bool(true)) => eval(body, &mut ScopeProxy::new(scope)),
+        Ok(Values::Str(x)) if !x.is_empty() => eval(body, &mut ScopeProxy::new(scope)),
+        Ok(Values::Int(x)) if x != 0 => eval(body, &mut ScopeProxy::new(scope)),
         Ok(Values::Bool(false)) | Ok(Values::Str(_))
         | Ok(Values::Int(_)) => {
             if let Some(ast) = other {
-                eval(*ast)
+                eval(*ast, &mut ScopeProxy::new(scope))
             } else {
                 Ok(Values::Unit)
             }
@@ -120,5 +133,31 @@ fn eval_if(guard: Ast, body: Ast, other: Option<Box<Ast>>) -> Result<Values, Str
         Ok(_) => 
             Err("Condition must operate on Boolean, Integer, or String".to_owned()),
         x => x,
+    }
+}
+
+fn eval_seq(children: Vec<Box<Ast>>, scope: &mut impl Environment) 
+    -> Result<Values, String> 
+{
+    let mut last_res : Result<Values, String> = 
+        Err("No children in sequence".to_owned());
+    for subtree in children {
+        match eval(*subtree, scope) {
+            er @ Err(_) => return er,
+            x => last_res = x,
+        }
+    }
+    last_res
+}
+
+fn eval_let(name: String, ast: Ast, scope: &mut impl Environment) 
+    -> Result<Values, String> 
+{
+    match eval(ast, scope) {
+        Ok(val) => {
+            scope.add(name, val, false);
+            Ok(Values::Unit)
+        },
+        err => err,
     }
 }

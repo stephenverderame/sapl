@@ -9,11 +9,11 @@ pub enum Tokens {
     Bool(bool),
     OpPlus, OpMinus, OpMult, OpDiv, OpMod, OpExp,
     OpLor, OpLand, OpOr, OpAnd, OpEq, OpLt, OpGt, 
-    OpLeq, OpGeq, OpNeq,
+    OpLeq, OpGeq, OpNeq, OpAssign,
     LParen, RParen, LBrace, RBrace, Colon,
     If, Else,
     Name(String),
-    Seq,
+    Seq, Let,
 }
 
 /// Converts an input stream into a deque of tokens
@@ -270,6 +270,7 @@ impl TokenizerFSM {
             ">=" => Some(Tokens::OpGeq),
             "==" => Some(Tokens::OpEq),
             "!=" => Some(Tokens::OpNeq),
+            "=" => Some(Tokens::OpAssign),
             _ => panic!("'{}' is not a recognized operator", self.input),
         }
     }
@@ -296,6 +297,7 @@ impl TokenizerFSM {
             "false" => Some(Tokens::Bool(false)),
             "if" => Some(Tokens::If),
             "else" => Some(Tokens::Else),
+            "let" => Some(Tokens::Let),
             x => Some(Tokens::Name(x.to_owned())),
         }
     }
