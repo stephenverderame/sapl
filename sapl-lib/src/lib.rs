@@ -61,10 +61,10 @@ mod tests {
         tokens = lexer::tokenize("-1001".as_bytes());
         assert_toks_eq(&tokens, vec![Tokens::Integer(-1001)]);
 
-        tokens = lexer::tokenize(".45".as_bytes());
+        tokens = lexer::tokenize("0.45".as_bytes());
         assert_toks_eq(&tokens, vec![Tokens::Float(0.45)]);
 
-        tokens = lexer::tokenize("-.77".as_bytes());
+        tokens = lexer::tokenize("-0.77".as_bytes());
         assert_toks_eq(&tokens, vec![Tokens::Float(-0.77)]);
 
         tokens = lexer::tokenize("0".as_bytes());
@@ -105,6 +105,14 @@ mod tests {
     }
 
     #[test]
+    fn lex_str_test() {
+        let toks = lexer::tokenize("if '': 0 else 5".as_bytes());
+        assert_toks_eq(&toks, vec![Tokens::If, Tokens::TString("".to_owned()),
+            Tokens::Colon, Tokens::Integer(0), Tokens::Else,
+            Tokens::Integer(5)]);
+    }
+
+    #[test]
     fn lex_name_test() {
         let toks = lexer::tokenize("true || false&&true".as_bytes());
         assert_toks_eq(&toks, vec![Tokens::Bool(true),
@@ -113,10 +121,29 @@ mod tests {
     }
 
     #[test]
+    fn multiline_test() {
+        let t = lexer::tokenize("13\n\t40".as_bytes());
+        assert_toks_eq(&t, vec![Tokens::Integer(13), Tokens::Integer(40)]);
+    }
+
+    #[test]
     fn literal_stream_test() {
-        let tokens = lexer::tokenize("134     'Cat'  -10.5".as_bytes());
+        let mut tokens = lexer::tokenize("134     'Cat'  -10.5".as_bytes());
         assert_toks_eq(&tokens, vec![Tokens::Integer(134),
-            Tokens::TString("Cat".to_owned()), Tokens::Float(-10.5)])
+            Tokens::TString("Cat".to_owned()), Tokens::Float(-10.5)]);
+
+        tokens = lexer::tokenize("\r\n\t".as_bytes());
+        assert_toks_eq(&tokens, vec![]);
+
+        tokens = lexer::tokenize("13\n\t40".as_bytes());
+        assert_toks_eq(&tokens, vec![Tokens::Integer(13), Tokens::Integer(40)]);
+
+        tokens = lexer::tokenize(r#"
+            13
+                40 
+                'C'
+            "#.as_bytes());
+        assert_toks_eq(&tokens, vec![Tokens::Integer(13), Tokens::Integer(40), Tokens::TString("C".to_owned())]);
     }
 
     #[test]
@@ -191,4 +218,39 @@ mod tests {
         assert_val_eq("'apple' == 'apple' && 'dog' != 'cat'", Values::Bool(true));
         assert_val_eq("true && false || true", Values::Bool(true));
     }
+
+    #[test]
+    fn conditional_test() {
+        assert_val_eq("if 100 != 10: 50 + 50", Values::Int(100));
+        assert_val_eq("if '': 0 else 10", Values::Int(10));
+
+        assert_parse_str_eq("if true: false else if true: true", Ast::If(Box::new(Ast::VBool(true)),
+            Box::new(Ast::VBool(false)), Some(Box::new(
+                Ast::If(Box::new(Ast::VBool(true)), Box::new(Ast::VBool(true)), None)
+            ))
+        ));
+
+        assert_val_eq("if false: false else if true: true", Values::Bool(true));
+
+        assert_val_eq(r#"
+            if 300 == 30 * 100: 
+                0
+            else if 10 > 0:
+                1
+        "#, Values::Int(1));
+
+        assert_val_eq(r#"
+            if 10 * -10 > -10:
+                0
+            else if 40 > 300:
+                0
+            else if 10 + '' == '10':
+                if 'cat' != true:
+                    if 'apple' > 'banana' {
+                        (10 + 3) ** 4 % 19
+                    }
+                else 
+                    (10 + 4) ** 3 % 17
+        "#, Values::Int(7));
+    } 
 }

@@ -15,16 +15,26 @@ pub enum Ast {
     VStr(String),
     VBool(bool),
     Bop(Box<Ast>, Op, Box<Ast>),
+    If(Box<Ast>, Box<Ast>, Option<Box<Ast>>),
 }
 
 /// Parses a stream of tokens `stream` into an Abstract Syntax Tree
 pub fn parse(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
     match stream.front() {
-        Some(Tokens::Integer(_)) | Some(Tokens::Float(_))
-        | Some(Tokens::TString(_)) | Some(Tokens::LParen)
-        | Some(Tokens::Bool(_))
-            => parse_expr(stream),
+        Some(x) if tok_is_expr(&x) => 
+            parse_expr(stream),
         _ => Err("unknown parse".to_owned()),
+    }
+}
+
+/// True if `tok` can start an expression
+fn tok_is_expr(tok: &Tokens) -> bool {
+    match *tok {
+        Tokens::Integer(_) | Tokens::Float(_)
+        | Tokens::Bool(_) | Tokens::TString(_)
+        | Tokens::LParen | Tokens::If =>
+        true,
+        _ => false,
     }
 }
 
@@ -154,7 +164,8 @@ fn parse_expr(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
     match stream.front() {
         Some(x) if tok_is_bop(x) =>
             parse_bop(left.unwrap(), None, stream),
-        Some(x) if *x == Tokens::RParen =>
+        Some(x) =>
+        //if *x == Tokens::RParen =>
             left,
         None => left,
         x => Err(format!("Unknown token {:?} in expr with left as {:?}", x, left)),
@@ -165,6 +176,7 @@ fn parse_expr(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
 fn parse_expr_left(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
     match stream.pop_front() {
         Some(Tokens::LParen) => parse_paren_expr(stream),
+        Some(Tokens::If) => parse_conditional(stream),
         Some(tok) => tok_to_val(tok),
         _ => Err("Expr missing left branch".to_owned()),
     }
@@ -181,4 +193,45 @@ fn parse_paren_expr(stream: &mut VecDeque<Tokens>) -> Result<Ast, String>
             _ => Err("Missing closing parenthesis".to_owned()),
         }
     } else {expr}
+}
+
+/// Parses an `If`
+/// Requires the `If` token already has been consumed
+fn parse_conditional(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
+    let guard = parse_expr(stream);
+    match (guard, stream.pop_front()) {
+        (Ok(guard), Some(tok @ Tokens::Colon)) |
+        (Ok(guard), Some(tok @ Tokens::LBrace)) => 
+            parse_if_body(guard, tok, stream),
+        (Ok(guard), _) => Err("Missing colon or { after If".to_owned()),
+        (e @ Err(_), _) => e,
+    } 
+}
+
+/// Parses the body of an if expression
+/// `guard` is the guard expression
+/// `opening` is the opening token of the body. Either `:` or `{`
+/// `stream` is the token stream
+fn parse_if_body(guard: Ast, opening: Tokens, stream: &mut VecDeque<Tokens>) 
+    -> Result<Ast, String> 
+{
+    let body = parse(stream);
+    if opening == Tokens::LBrace 
+        && stream.pop_front() != Some(Tokens::RBrace) 
+    {
+        return Err("Missing closing } after bracketed if".to_owned());
+    }
+    if body.is_err() { return body; }
+    let body = body.unwrap();
+    match stream.front() {
+        Some(Tokens::Else) => {
+            stream.pop_front();
+            let other = parse_expr(stream);
+            if other.is_ok() {
+                Ok(Ast::If(Box::new(guard), Box::new(body), 
+                    Some(Box::new(other.unwrap()))))
+            } else { other }
+        },
+        _ => Ok(Ast::If(Box::new(guard), Box::new(body), None)),
+    }
 }

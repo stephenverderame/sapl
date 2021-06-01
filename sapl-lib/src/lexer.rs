@@ -10,7 +10,10 @@ pub enum Tokens {
     OpPlus, OpMinus, OpMult, OpDiv, OpMod, OpExp,
     OpLor, OpLand, OpOr, OpAnd, OpEq, OpLt, OpGt, 
     OpLeq, OpGeq, OpNeq,
-    LParen, RParen,
+    LParen, RParen, LBrace, RBrace, Colon,
+    If, Else,
+    Name(String),
+    Seq,
 }
 
 /// Converts an input stream into a deque of tokens
@@ -24,6 +27,7 @@ pub fn tokenize(reader: impl Read) -> VecDeque<Tokens> {
     {
         let mut t_line = fsm.tokenize_line(&buf).expect("Could not tokenize line");
         deque.append(&mut t_line);
+        buf.clear();
     }
     deque
     
@@ -94,9 +98,11 @@ impl TokenizerFSM {
             _ if input == b'\'' || input == b'"' => 
                 (TokenizerStates::ReadString(input), self.done_parse_token()),
 
+            _ if input.is_ascii_whitespace() => 
+                (TokenizerStates::Init, self.done_parse_token()),   
+
             // lex numbers
-            TokenizerStates::Init | TokenizerStates::ReadMinus 
-            | TokenizerStates::ReadInt if input == b'.' => 
+            TokenizerStates::ReadInt if input == b'.' => 
                 (TokenizerStates::ReadFloat, None),
             TokenizerStates::Init if input == b'-' => 
                 (TokenizerStates::ReadMinus, None),
@@ -128,9 +134,7 @@ impl TokenizerFSM {
                 (TokenizerStates::ReadId, None),
             _ if TokenizerFSM::is_name_character(input) =>
                 (TokenizerStates::ReadId, self.done_parse_token()),
-            
-            _ if input.is_ascii_whitespace() => 
-                (TokenizerStates::Init, self.done_parse_token()),        
+                            
 
             _ => panic!("Unknown state transition: {:?} to {}", &self.state, input as char),
         }
@@ -183,7 +187,6 @@ impl TokenizerFSM {
     /// Signals that a whitespace character has occurred and 
     /// an entire token has been read
     fn done_parse_token(&self) -> Option<Tokens> {
-        //self.input = self.input.trim_left().to_owned();
         match &self.state {
             TokenizerStates::ReadInt => self.parse_cur_as_int(),
             TokenizerStates::ReadFloat => self.parse_cur_as_float(),
@@ -234,7 +237,7 @@ impl TokenizerFSM {
             | b'/' | b'*' | b'.' | b'%'
             | b'^' | b'@' | b'!' | b'#'
             | b'=' | b'~' | b'<' | b'>'
-            | b'?' | b':' => true,
+            | b'?'  => true,
             _ => false,
         }
     }
@@ -243,7 +246,7 @@ impl TokenizerFSM {
     fn is_lang_symbol(c: u8) -> bool {
         match c {
             b'(' | b')' | b'{' | b'}'
-            | b';' => true,
+            | b';' | b':' => true,
             _ => false,
         }
     }
@@ -275,6 +278,10 @@ impl TokenizerFSM {
         match &self.input[..] {
             "(" => Some(Tokens::LParen),
             ")" => Some(Tokens::RParen),
+            "{" => Some(Tokens::LBrace),
+            "}" => Some(Tokens::RBrace),
+            ":" => Some(Tokens::Colon),
+            ";" => Some(Tokens::Seq),
             _ => panic!("\"{}\" is not a recognized language symbol", self.input),
         }
     }
@@ -287,7 +294,9 @@ impl TokenizerFSM {
         match &self.input[..] {
             "true" => Some(Tokens::Bool(true)),
             "false" => Some(Tokens::Bool(false)),
-            _ => panic!("Unknown name {}", self.input),
+            "if" => Some(Tokens::If),
+            "else" => Some(Tokens::Else),
+            x => Some(Tokens::Name(x.to_owned())),
         }
     }
     

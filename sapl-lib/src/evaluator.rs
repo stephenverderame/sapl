@@ -18,6 +18,7 @@ pub fn eval(ast: Ast) ->  Result<Values, String> {
         Ast::VStr(x) => Ok(Values::Str(x)),
         Ast::VBool(x) => Ok(Values::Bool(x)),
         Ast::Bop(left, op, right) => eval_bop(*left, op, *right),
+        Ast::If(guard, body, other) => eval_if(*guard, *body, other),
     }
 }
 
@@ -75,6 +76,7 @@ fn perform_bop(vleft: Values, op: Op, vright: Values) -> Result<Values, String> 
 
         (Values::Bool(x), Op::Lor, Values::Bool(y)) => Ok(Values::Bool(x || y)),
         (Values::Bool(x), Op::Land, Values::Bool(y)) => Ok(Values::Bool(x && y)),
+        (a, Op::Neq, b) if a != b => Ok(Values::Bool(true)),
         (x, op, y) => 
             Err(format!("'{:?} {:?} {:?}' is an invalid Bop or invalid arguments", x, op, y))
     }
@@ -99,5 +101,24 @@ fn promote_args(a: Values, b: Values, op: &Op) -> (Values, Values) {
         (Values::Float(y), Values::Str(x), Op::Plus) => 
             (Values::Str(y.to_string()), Values::Str(x)),
         (v1, v2, _) => (v1, v2),
+    }
+}
+
+fn eval_if(guard: Ast, body: Ast, other: Option<Box<Ast>>) -> Result<Values, String> {
+    match eval(guard) {
+        Ok(Values::Bool(true)) => eval(body),
+        Ok(Values::Str(x)) if !x.is_empty() => eval(body),
+        Ok(Values::Int(x)) if x != 0 => eval(body),
+        Ok(Values::Bool(false)) | Ok(Values::Str(_))
+        | Ok(Values::Int(_)) => {
+            if let Some(ast) = other {
+                eval(*ast)
+            } else {
+                Ok(Values::Unit)
+            }
+        },
+        Ok(_) => 
+            Err("Condition must operate on Boolean, Integer, or String".to_owned()),
+        x => x,
     }
 }
