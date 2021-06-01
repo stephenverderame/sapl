@@ -278,7 +278,7 @@ fn parse_let(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
         if stream.pop_front() != Some(Tokens::OpAssign) { 
             return Err("Missing '=' in let defn".to_owned())
         }
-        let val = parse(stream);
+        let val = parse_expr(stream);
         if val.is_err() { return val; }
         Ok(Ast::Let(nm, Box::new(val.unwrap())))
     } else {

@@ -273,6 +273,19 @@ mod tests {
 
     #[test]
     fn let_test() {
+        assert_parse_str_eq("let x = 5; x", Ast::Seq(vec![
+            Box::new(Ast::Let("x".to_owned(), Box::new(Ast::VInt(5)))),
+            Box::new(Ast::Name("x".to_owned()))
+        ]));
         assert_val_eq("let x = 5; x", Values::Int(5));
+        assert_val_eq(r#"
+        let name = 'Joe';
+        let other = 
+        if name {
+            let name = 'y';
+            name + ' yea!'
+        };
+        name + other
+        "#, Values::Str("Joey yea!".to_owned()));
     }
 }

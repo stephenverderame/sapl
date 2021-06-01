@@ -29,7 +29,7 @@ fn eval(ast: Ast, scope: &mut impl Environment) -> Result<Values, String> {
         Ast::Bop(left, op, right) => eval_bop(*left, op, *right, scope),
         Ast::If(guard, body, other) => eval_if(*guard, *body, other, scope),
         Ast::Seq(children) => eval_seq(children, scope),
-        Ast::Let(name, ast) => eval_let(name, *ast, scope),
+        Ast::Let(name, ast) => eval_let(name.clone(), *ast, scope),
     }
 }
 
@@ -146,6 +146,7 @@ fn eval_seq(children: Vec<Box<Ast>>, scope: &mut impl Environment)
             er @ Err(_) => return er,
             x => last_res = x,
         }
+        println!("After seq: {:?}", scope.find("x".to_owned()));
     }
     last_res
 }
