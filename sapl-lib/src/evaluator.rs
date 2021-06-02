@@ -11,7 +11,7 @@ pub enum Values {
     Str(String),
     Unit,
     Bool(bool),
-    Func(Vec<String>, Ast),
+    Func(Vec<String>, Ast, Scope),
 }
 
 
@@ -171,11 +171,31 @@ fn eval_let(name: String, ast: Ast, scope: &mut impl Environment)
 fn eval_func(name: String, params: Vec<String>, ast: Ast, scope: &mut impl Environment)
     -> Result<Values, String>
 {
-    Err("Unimplemented".to_owned())
+    scope.add(name, Values::Func(params, ast, scope.cpy()), false);
+    Ok(Values::Unit)
 }
 
 fn eval_fn_app(name: String, args: Vec<Box<Ast>>, scope: &mut impl Environment)
     -> Result<Values, String>
 {
-    Err("Unimplemented".to_owned())
+    if let Ok(Values::Func(params, ast, mut fn_scope)) = scope.find(name) {
+        if params.len() != args.len() { 
+            return Err("Arg count mismatch".to_owned()); 
+        }
+        let mut vals = Vec::<Values>::new();
+        for arg in args {
+            match eval(*arg, scope) {
+                Ok(v) => vals.push(v),
+                e => return e,
+            }
+        }
+        let mut sc = ScopeProxy::new(&mut fn_scope);
+        for (nm, val) in params.iter().zip(vals.iter()) {
+            sc.add(nm.to_string(), val.clone(), false);
+        }
+        eval(ast, &mut sc)
+    } else {
+        Err("Variable is not a function".to_owned())
+    }
+
 }

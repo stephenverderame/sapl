@@ -13,7 +13,7 @@ pub trait Environment {
     fn cpy(&self) -> Scope;
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct Scope {
     names: LinkedList<HashMap<String, (Values, bool)>>,
 }

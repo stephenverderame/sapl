@@ -298,4 +298,27 @@ mod tests {
         name + other
         "#, Values::Str("Joey yea!".to_owned()));
     }
+
+    #[test]
+    fn func_test() {
+        assert_val_eq(r#"
+        fun do_stuff x y z {
+            x + y + z
+        };
+        let x = 500 * (20 - 3 ** 2);
+        do_stuff(x, 10, 20)
+        "#, Values::Int(5530));
+
+        assert_val_eq(r#"
+        let x = 10;
+        fun no_params {
+            if x > 5:
+                x ** 3
+            else
+                x
+        };
+        let y = no_params() - x;
+        'Answer: ' + y
+        "#, Values::Str("Answer: 990".to_owned()));
+    }
 }
