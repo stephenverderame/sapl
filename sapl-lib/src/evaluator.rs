@@ -171,11 +171,11 @@ fn eval_let(name: String, ast: Ast, scope: &mut impl Environment)
 fn eval_func(name: String, params: Vec<String>, ast: Ast, scope: &mut impl Environment)
     -> Result<Values, String>
 {
-
+    Err("Unimplemented".to_owned())
 }
 
 fn eval_fn_app(name: String, args: Vec<Box<Ast>>, scope: &mut impl Environment)
     -> Result<Values, String>
 {
-
+    Err("Unimplemented".to_owned())
 }
