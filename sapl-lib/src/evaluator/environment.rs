@@ -10,8 +10,10 @@ pub trait Environment {
     fn update(&mut self, name: String, val: Values) -> bool;
     fn new_scope(&mut self, int: Internal);
     fn pop_scope(&mut self, int: Internal);
+    fn cpy(&self) -> Scope;
 }
 
+#[derive(Clone)]
 pub struct Scope {
     names: LinkedList<HashMap<String, (Values, bool)>>,
 }
@@ -71,6 +73,10 @@ impl Environment for Scope {
         self.names.pop_front();
     }
 
+    fn cpy(&self) -> Scope {
+        self.clone()
+    }
+
 
 }
 
@@ -108,5 +114,8 @@ impl<'a> Environment for ScopeProxy<'a> {
     }
     fn pop_scope(&mut self, x: Internal) {
         self.scope.pop_scope(x)
+    }
+    fn cpy(&self) -> Scope {
+        self.scope.cpy()
     }
 }

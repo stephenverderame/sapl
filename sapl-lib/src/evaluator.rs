@@ -11,6 +11,7 @@ pub enum Values {
     Str(String),
     Unit,
     Bool(bool),
+    Func(Vec<String>, Ast),
 }
 
 
@@ -30,6 +31,8 @@ fn eval(ast: Ast, scope: &mut impl Environment) -> Result<Values, String> {
         Ast::If(guard, body, other) => eval_if(*guard, *body, other, scope),
         Ast::Seq(children) => eval_seq(children, scope),
         Ast::Let(name, ast) => eval_let(name.clone(), *ast, scope),
+        Ast::Func(name, params, ast) => eval_func(name, params, *ast, scope),
+        Ast::FnApply(name, args) => eval_fn_app(name, args, scope),
     }
 }
 
@@ -151,6 +154,8 @@ fn eval_seq(children: Vec<Box<Ast>>, scope: &mut impl Environment)
     last_res
 }
 
+/// Evaluates a let definition by adding `name` to `scope`
+/// Returns unit on success
 fn eval_let(name: String, ast: Ast, scope: &mut impl Environment) 
     -> Result<Values, String> 
 {
@@ -161,4 +166,16 @@ fn eval_let(name: String, ast: Ast, scope: &mut impl Environment)
         },
         err => err,
     }
+}
+
+fn eval_func(name: String, params: Vec<String>, ast: Ast, scope: &mut impl Environment)
+    -> Result<Values, String>
+{
+
+}
+
+fn eval_fn_app(name: String, args: Vec<Box<Ast>>, scope: &mut impl Environment)
+    -> Result<Values, String>
+{
+
 }

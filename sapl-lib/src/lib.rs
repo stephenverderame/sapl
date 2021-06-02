@@ -252,6 +252,16 @@ mod tests {
                 else 
                     (10 + 4) ** 3 % 17
         "#, Values::Int(7));
+
+        assert_val_eq(r#"
+        let x = 'app';
+        if x == 'apple' {
+            let y = x
+        };
+        if x == 'app' {
+            "yes"
+        }
+        "#, Values::Str("yes".to_owned()));
     } 
 
     #[test]

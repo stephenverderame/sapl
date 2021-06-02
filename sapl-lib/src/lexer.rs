@@ -14,6 +14,7 @@ pub enum Tokens {
     If, Else,
     Name(String),
     Seq, Let,
+    Fun, Comma,
 }
 
 /// Converts an input stream into a deque of tokens
@@ -246,7 +247,7 @@ impl TokenizerFSM {
     fn is_lang_symbol(c: u8) -> bool {
         match c {
             b'(' | b')' | b'{' | b'}'
-            | b';' | b':' => true,
+            | b';' | b':' | b',' => true,
             _ => false,
         }
     }
@@ -283,6 +284,7 @@ impl TokenizerFSM {
             "}" => Some(Tokens::RBrace),
             ":" => Some(Tokens::Colon),
             ";" => Some(Tokens::Seq),
+            "," => Some(Tokens::Comma),
             _ => panic!("\"{}\" is not a recognized language symbol", self.input),
         }
     }
@@ -298,6 +300,7 @@ impl TokenizerFSM {
             "if" => Some(Tokens::If),
             "else" => Some(Tokens::Else),
             "let" => Some(Tokens::Let),
+            "fun" => Some(Tokens::Fun),
             x => Some(Tokens::Name(x.to_owned())),
         }
     }
