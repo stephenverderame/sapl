@@ -184,6 +184,7 @@ mod tests {
             Op::Sub,
             Box::new(Ast::VInt(10))
         ));
+
     }
 
     #[test]
@@ -197,6 +198,8 @@ mod tests {
         assert_val_eq("42", Values::Int(42));
         assert_val_eq("42 - -20", Values::Int(62));
         assert_val_eq("10+20-3*4", Values::Int(18));
+        assert_val_eq("true || 10 / 0 > 0", Values::Bool(true));
+        assert_val_eq("false && 5 / 0 == 0", Values::Bool(false));
     }
 
     #[test]

@@ -35,19 +35,28 @@ fn eval(ast: Ast, scope: &mut impl Environment) -> Result<Values, String> {
         Ast::FnApply(name, args) => eval_fn_app(name, args, scope),
     }
 }
-
-/// Evaluates each subtree `left` and `right` and if they are both valid
-/// Performs the operation `left op right`
+/// Evaluates `left op right`
+/// If `op` is a short circuit operator, only evaluates `left` if the short circuit path is taken
+/// Otherwise evaluates both `left` and `right` and then performs the bop between the two values
 fn eval_bop(left: Ast, op: Op, right: Ast, scope: &mut impl Environment) -> Result<Values, String> {
     let left = eval(left, scope);
-    let right = eval(right, scope);
-    match (left, right) {
-        (Ok(vleft), Ok(vright)) => perform_bop(vleft, op, vright),
-        (Err(e), _) | (_, Err(e)) => Err(e),      
+    match (left, op) {
+        (Ok(Values::Bool(true)), Op::Lor) => Ok(Values::Bool(true)),
+        (Ok(Values::Bool(false)), Op::Land) => Ok(Values::Bool(false)),
+        (Ok(val), op) => {
+            match (eval(right, scope), op) {
+                (Ok(right), op @ Op::Eq) | (Ok(right), op @ Op::Neq) =>
+                    perform_eq_test(val, op, right),
+                (Ok(right), op) => perform_bop(val, op, right),
+                (e, _) => e,
+            }
+        },
+        (e, _) => e,
     }
 }
 
 /// Evaluates the binary operator `op` with arguments `vleft` and `vright`
+/// by first promoting mismatch arguments to the same type and then evaluating them
 fn perform_bop(vleft: Values, op: Op, vright: Values) -> Result<Values, String> {
     let (a, b) = promote_args(vleft, vright, &op);
     match (a, op, b) {
@@ -62,10 +71,8 @@ fn perform_bop(vleft: Values, op: Op, vright: Values) -> Result<Values, String> 
         (Values::Int(x), Op::Mod, Values::Int(y)) => Ok(Values::Int(x % y)),
         (Values::Int(x), Op::Lt, Values::Int(y)) => Ok(Values::Bool(x < y)),
         (Values::Int(x), Op::Gt, Values::Int(y)) => Ok(Values::Bool(x > y)),
-        (Values::Int(x), Op::Eq, Values::Int(y)) => Ok(Values::Bool(x == y)),
         (Values::Int(x), Op::Leq, Values::Int(y)) => Ok(Values::Bool(x <= y)),
         (Values::Int(x), Op::Geq, Values::Int(y)) => Ok(Values::Bool(x >= y)),
-        (Values::Int(x), Op::Neq, Values::Int(y)) => Ok(Values::Bool(x != y)),
 
         (Values::Float(x), Op::Plus, Values::Float(y)) => Ok(Values::Float(x + y)),
         (Values::Float(x), Op::Sub, Values::Float(y)) => Ok(Values::Float(x - y)),
@@ -75,14 +82,10 @@ fn perform_bop(vleft: Values, op: Op, vright: Values) -> Result<Values, String> 
             Ok(Values::Float(f64::powf(x, y))),
         (Values::Float(x), Op::Lt, Values::Float(y)) => Ok(Values::Bool(x < y)),
         (Values::Float(x), Op::Gt, Values::Float(y)) => Ok(Values::Bool(x > y)),
-        (Values::Float(x), Op::Eq, Values::Float(y)) => Ok(Values::Bool(x == y)),
         (Values::Float(x), Op::Leq, Values::Float(y)) => Ok(Values::Bool(x <= y)),
         (Values::Float(x), Op::Geq, Values::Float(y)) => Ok(Values::Bool(x >= y)),
-        (Values::Float(x), Op::Neq, Values::Float(y)) => Ok(Values::Bool(x != y)),
 
         (Values::Str(x), Op::Plus, Values::Str(y)) => Ok(Values::Str(x + &y)),
-        (Values::Str(x), Op::Eq, Values::Str(y)) => Ok(Values::Bool(x.eq(&y))),
-        (Values::Str(x), Op::Neq, Values::Str(y)) => Ok(Values::Bool(!x.eq(&y))),
         (Values::Str(x), Op::Lt, Values::Str(y)) => Ok(Values::Bool(x < y)),
         (Values::Str(x), Op::Gt, Values::Str(y)) => Ok(Values::Bool(x > y)),
         (Values::Str(x), Op::Geq, Values::Str(y)) => Ok(Values::Bool(x >= y)),
@@ -90,9 +93,24 @@ fn perform_bop(vleft: Values, op: Op, vright: Values) -> Result<Values, String> 
 
         (Values::Bool(x), Op::Lor, Values::Bool(y)) => Ok(Values::Bool(x || y)),
         (Values::Bool(x), Op::Land, Values::Bool(y)) => Ok(Values::Bool(x && y)),
-        (a, Op::Neq, b) if a != b => Ok(Values::Bool(true)),
         (x, op, y) => 
             Err(format!("'{:?} {:?} {:?}' is an invalid Bop or invalid arguments", x, op, y))
+    }
+}
+
+/// Determines if `left op right` where `op` is an equality operator
+fn perform_eq_test(left: Values, op: Op, right: Values) -> Result<Values, String> {
+    match (left, op, right) {
+        (Values::Int(x), Op::Eq, Values::Int(y)) => Ok(Values::Bool(x == y)),
+        (Values::Bool(x), Op::Eq, Values::Bool(y)) => Ok(Values::Bool(x == y)),
+        (Values::Int(x), Op::Eq, Values::Int(y)) => Ok(Values::Bool(x == y)),
+        (Values::Str(x), Op::Eq, Values::Str(y)) => Ok(Values::Bool(x.eq(&y))),
+        (Values::Str(x), Op::Neq, Values::Str(y)) => Ok(Values::Bool(!x.eq(&y))),
+        (Values::Unit, Op::Eq, Values::Unit) => Ok(Values::Bool(true)),
+        (_, Op::Eq, _) => Ok(Values::Bool(false)),
+        (x, Op::Neq, y) if x != y => Ok(Values::Bool(true)),
+        (_, Op::Neq, _) => Ok(Values::Bool(false)),
+        _ => Err("Not an equality test".to_owned()),
     }
 }
 
