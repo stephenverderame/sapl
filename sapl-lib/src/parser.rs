@@ -25,31 +25,52 @@ pub enum Ast {
 
 /// Parses a stream of tokens `stream` into an Abstract Syntax Tree
 pub fn parse(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
-    let expr =
+    parse_seq(parse_single(stream), stream)
+}
+
+/// Parses a single expression or definition
+fn parse_single(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
     match stream.front() {
         Some(x) if tok_is_expr(&x) => 
             parse_expr(stream),
         Some(x) if tok_is_defn(&x) =>
             parse_defn(stream),
         _ => Err("unknown parse".to_owned()),
-    };
-    parse_seq(expr, stream)
+    }
 }
 
 /// Parses a sequence following `ast`
 /// If `ast` is not part of a sequence, returns `ast`
 /// If any ast in the sequence fails to parse, returns that error
 fn parse_seq(ast: Result<Ast, String>, stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
-    if ast.is_err() || stream.front() != Some(&Tokens::Seq) { return ast; }
-    let ast = ast.unwrap();
-    let mut children = vec![Box::new(ast)];
-    while let Some(Tokens::Seq) = stream.front() {
-        stream.pop_front();
-        let next = parse(stream);
-        if next.is_err() { return next; }
-        children.push(Box::new(next.unwrap()));
+    if ast.is_err() || stream.front() == None { return ast; }
+    let mut vec = vec![Box::new(ast.unwrap())];
+    let mut last = vec.last().unwrap();
+    while can_elide_seq(last) || stream.front() == Some(&Tokens::Seq) {
+        let is_seq_token = stream.front() == Some(&Tokens::Seq);
+        if is_seq_token { consume(stream); }   
+        match parse_single(stream) {
+            Ok(ast) => {
+                vec.push(Box::new(ast));
+                last = vec.last().unwrap();
+            },
+            e if is_seq_token => return e,
+            _ => break,
+        }
     }
-    Ok(Ast::Seq(children))
+    if vec.len() == 1 {
+        Ok(*(vec.pop().unwrap()))
+    } else {
+        Ok(Ast::Seq(vec))
+    }
+}
+
+fn can_elide_seq(ast: &Ast) -> bool {
+    match ast {
+        Ast::If(..) |
+        Ast::Func(..) => true,
+        _ => false,
+    }
 }
 
 /// True if `tok` can start an expression
@@ -218,7 +239,7 @@ fn parse_expr_left(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
         Some(Tokens::If) => parse_conditional(consume(stream)),
         Some(Tokens::Name(x)) => parse_name(stream),
         Some(tok) if tok_is_val(tok) => tok_to_val(stream.pop_front().unwrap()),
-        _ => Err("Expr missing left branch".to_owned()),
+        t => Err(format!("Unexpected {:?} in expr left branch", t)),
     }
 }
 

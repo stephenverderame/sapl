@@ -322,6 +322,21 @@ mod tests {
         };
         let y = no_params() - x;
         'Answer: ' + y
-        "#, Values::Str("Answer: 990".to_owned()));
+        "#, Values::Str("Answer: 990".to_owned())); 
+
+        assert_val_eq(r#"
+        fun max a b {
+            if a > b:
+                a
+            else
+                b
+        }
+
+        fun min a b {
+            if a < b: a else b
+        }
+
+        min(max(5, 10), 11)
+        "#, Values::Int(10));
     }
 }
