@@ -5,9 +5,9 @@ use std::collections::LinkedList;
 struct Internal {}
 
 pub trait Environment {
-    fn find(&self, name: String) -> Result<Values, String>;
+    fn find(&self, name: &str) -> Result<Values, String>;
     fn add(&mut self, name: String, val: Values, mutable: bool);
-    fn update(&mut self, name: String, val: Values) -> bool;
+    fn update(&mut self, name: &str, val: Values) -> bool;
     fn new_scope(&mut self, int: Internal);
     fn pop_scope(&mut self, int: Internal);
     fn cpy(&self) -> Scope;
@@ -31,10 +31,9 @@ impl Scope {
 }
 
 impl Environment for Scope {
-    fn find(&self, name: String) -> Result<Values, String> {
-        println!("{:?}", self.names.front());
+    fn find(&self, name: &str) -> Result<Values, String> {
         for map in &self.names {
-            if let Some((val, _)) = map.get(&name) {
+            if let Some((val, _)) = map.get(name) {
                 return Ok(val.clone());
             }
         }
@@ -45,14 +44,13 @@ impl Environment for Scope {
     /// Adds `name` to the scope
     fn add(&mut self, name: String, val: Values, mutable: bool) {
         self.names.front_mut().unwrap().insert(name, (val, mutable));
-        println!("Adding... {:?}", self.names.front());
     }
 
     /// Updates `name` in whichever scope it exists
     /// Returns `true` if successful, `false` otherwise
-    fn update(&mut self, name: String, val: Values) -> bool {
+    fn update(&mut self, name: &str, val: Values) -> bool {
         for map in &mut self.names {
-            match map.get_mut(&name) {
+            match map.get_mut(name) {
                 Some((v, true)) => {
                     *v = val;
                     return true;
@@ -91,6 +89,13 @@ impl<'a> ScopeProxy<'a> {
             scope: parent,
         }
     }
+
+    pub fn from(parent: &'a mut Scope) -> ScopeProxy<'a> {
+        parent.new_scope(Internal {});
+        ScopeProxy {
+            scope: parent,
+        }
+    }
 }
 
 impl<'a> Drop for ScopeProxy<'a> {
@@ -100,13 +105,13 @@ impl<'a> Drop for ScopeProxy<'a> {
 }
 
 impl<'a> Environment for ScopeProxy<'a> {
-    fn find(&self, name: String) -> Result<Values, String> {
+    fn find(&self, name: &str) -> Result<Values, String> {
         self.scope.find(name)
     }
     fn add(&mut self, name: String, val: Values, mutable: bool) {
         self.scope.add(name, val, mutable)
     }
-    fn update(&mut self, name: String, val: Values) -> bool {
+    fn update(&mut self, name: &str, val: Values) -> bool {
         self.scope.update(name, val)
     }
     fn new_scope(&mut self, x: Internal) {

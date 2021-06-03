@@ -9,7 +9,7 @@ pub fn parse_sapl(input: impl Read) -> Result<Values, String> {
     let mut tokens = lexer::tokenize(input);
     let ast = parser::parse(&mut tokens);
     if let Ok(ast) = ast {
-        evaluator::evaluate(ast)
+        evaluator::evaluate(&ast)
     } else {
         Err(ast.unwrap_err())
     }
@@ -43,7 +43,7 @@ mod tests {
     fn assert_val_eq(code: &str, val: Values) {
         let mut ts = lexer::tokenize(code.as_bytes());
         let ast = parser::parse(&mut ts).unwrap();
-        assert_eq!(evaluator::evaluate(ast).unwrap(), val);
+        assert_eq!(evaluator::evaluate(&ast).unwrap(), val);
 
     }
 
@@ -338,5 +338,18 @@ mod tests {
 
         min(max(5, 10), 11)
         "#, Values::Int(10));
+
+        assert_parse_str_eq("3 * func(3)", Ast::Bop(Box::new(Ast::VInt(3)), Op::Mult, 
+            Box::new(Ast::FnApply("func".to_owned(), vec![Box::new(Ast::VInt(3))]))));
+
+        assert_val_eq(r#"
+        fun fact x {
+            if x <= 1: 1
+            else
+                x * fact(x - 1)
+        }
+
+        fact(2)
+        "#, Values::Int(2));
     }
 }

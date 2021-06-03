@@ -1,5 +1,8 @@
 use crate::parser::Ast;
 use crate::parser::Op;
+use std::rc::Rc;
+use std::cell::RefCell;
+use std::cell::RefMut;
 
 mod environment;
 use environment::*;
@@ -11,34 +14,34 @@ pub enum Values {
     Str(String),
     Unit,
     Bool(bool),
-    Func(Vec<String>, Ast, Scope),
+    Func(Vec<String>, Ast, Rc<RefCell<Scope>>),
 }
 
 
-pub fn evaluate(ast: Ast) -> Result<Values, String> {
+pub fn evaluate(ast: &Ast) -> Result<Values, String> {
     eval(ast, &mut Scope::new())
 }
 
 /// Evaluates the ast to a value
-fn eval(ast: Ast, scope: &mut impl Environment) -> Result<Values, String> {
+fn eval(ast: &Ast, scope: &mut impl Environment) -> Result<Values, String> {
     match ast {
-        Ast::VFloat(x) => Ok(Values::Float(x)),
-        Ast::VInt(x) => Ok(Values::Int(x)),
-        Ast::VStr(x) => Ok(Values::Str(x)),
-        Ast::VBool(x) => Ok(Values::Bool(x)),
+        Ast::VFloat(x) => Ok(Values::Float(*x)),
+        Ast::VInt(x) => Ok(Values::Int(*x)),
+        Ast::VStr(x) => Ok(Values::Str(x.clone())),
+        Ast::VBool(x) => Ok(Values::Bool(*x)),
         Ast::Name(x) => scope.find(x),
-        Ast::Bop(left, op, right) => eval_bop(*left, op, *right, scope),
-        Ast::If(guard, body, other) => eval_if(*guard, *body, other, scope),
+        Ast::Bop(left, op, right) => eval_bop(&*left, op, &*right, scope),
+        Ast::If(guard, body, other) => eval_if(&*guard, &*body, other, scope),
         Ast::Seq(children) => eval_seq(children, scope),
-        Ast::Let(name, ast) => eval_let(name.clone(), *ast, scope),
-        Ast::Func(name, params, ast) => eval_func(name, params, *ast, scope),
+        Ast::Let(name, ast) => eval_let(name, &*ast, scope),
+        Ast::Func(name, params, ast) => eval_func(name, params, &*ast, scope),
         Ast::FnApply(name, args) => eval_fn_app(name, args, scope),
     }
 }
 /// Evaluates `left op right`
 /// If `op` is a short circuit operator, only evaluates `left` if the short circuit path is taken
 /// Otherwise evaluates both `left` and `right` and then performs the bop between the two values
-fn eval_bop(left: Ast, op: Op, right: Ast, scope: &mut impl Environment) -> Result<Values, String> {
+fn eval_bop(left: &Ast, op: &Op, right: &Ast, scope: &mut impl Environment) -> Result<Values, String> {
     let left = eval(left, scope);
     match (left, op) {
         (Ok(Values::Bool(true)), Op::Lor) => Ok(Values::Bool(true)),
@@ -57,7 +60,7 @@ fn eval_bop(left: Ast, op: Op, right: Ast, scope: &mut impl Environment) -> Resu
 
 /// Evaluates the binary operator `op` with arguments `vleft` and `vright`
 /// by first promoting mismatch arguments to the same type and then evaluating them
-fn perform_bop(vleft: Values, op: Op, vright: Values) -> Result<Values, String> {
+fn perform_bop(vleft: Values, op: &Op, vright: Values) -> Result<Values, String> {
     let (a, b) = promote_args(vleft, vright, &op);
     match (a, op, b) {
         (Values::Int(x), Op::Plus, Values::Int(y)) => Ok(Values::Int(x + y)),
@@ -99,7 +102,7 @@ fn perform_bop(vleft: Values, op: Op, vright: Values) -> Result<Values, String> 
 }
 
 /// Determines if `left op right` where `op` is an equality operator
-fn perform_eq_test(left: Values, op: Op, right: Values) -> Result<Values, String> {
+fn perform_eq_test(left: Values, op: &Op, right: Values) -> Result<Values, String> {
     match (left, op, right) {
         (Values::Int(x), Op::Eq, Values::Int(y)) => Ok(Values::Bool(x == y)),
         (Values::Bool(x), Op::Eq, Values::Bool(y)) => Ok(Values::Bool(x == y)),
@@ -136,7 +139,7 @@ fn promote_args(a: Values, b: Values, op: &Op) -> (Values, Values) {
     }
 }
 
-fn eval_if(guard: Ast, body: Ast, other: Option<Box<Ast>>, 
+fn eval_if(guard: &Ast, body: &Ast, other: &Option<Box<Ast>>, 
     scope: &mut impl Environment) -> Result<Values, String> 
 {
     match eval(guard, scope) {
@@ -146,7 +149,7 @@ fn eval_if(guard: Ast, body: Ast, other: Option<Box<Ast>>,
         Ok(Values::Bool(false)) | Ok(Values::Str(_))
         | Ok(Values::Int(_)) => {
             if let Some(ast) = other {
-                eval(*ast, &mut ScopeProxy::new(scope))
+                eval(&*ast, &mut ScopeProxy::new(scope))
             } else {
                 Ok(Values::Unit)
             }
@@ -157,61 +160,104 @@ fn eval_if(guard: Ast, body: Ast, other: Option<Box<Ast>>,
     }
 }
 
-fn eval_seq(children: Vec<Box<Ast>>, scope: &mut impl Environment) 
+fn eval_seq(children: &Vec<Box<Ast>>, scope: &mut impl Environment) 
     -> Result<Values, String> 
 {
     let mut last_res : Result<Values, String> = 
         Err("No children in sequence".to_owned());
     for subtree in children {
-        match eval(*subtree, scope) {
+        match eval(&*subtree, scope) {
             er @ Err(_) => return er,
             x => last_res = x,
         }
-        println!("After seq: {:?}", scope.find("x".to_owned()));
     }
     last_res
 }
 
 /// Evaluates a let definition by adding `name` to `scope`
 /// Returns unit on success
-fn eval_let(name: String, ast: Ast, scope: &mut impl Environment) 
+fn eval_let(name: &String, ast: &Ast, scope: &mut impl Environment) 
     -> Result<Values, String> 
 {
     match eval(ast, scope) {
         Ok(val) => {
-            scope.add(name, val, false);
+            scope.add(name.to_string(), val, false);
             Ok(Values::Unit)
         },
         err => err,
     }
 }
 
-fn eval_func(name: String, params: Vec<String>, ast: Ast, scope: &mut impl Environment)
+fn eval_func(name: &String, params: &Vec<String>, ast: &Ast, scope: &mut impl Environment)
     -> Result<Values, String>
 {
-    scope.add(name, Values::Func(params, ast, scope.cpy()), false);
+    let nw_scope = Rc::new(RefCell::new(Scope::new()));
+    scope.add(name.to_string(), 
+        Values::Func(params.clone(), ast.clone(), nw_scope.clone()), false);
+    capture_into_scope(ast, &mut nw_scope.borrow_mut(), scope);
     Ok(Values::Unit)
 }
 
-fn eval_fn_app(name: String, args: Vec<Box<Ast>>, scope: &mut impl Environment)
+/// Searches for names in `ast` and captures them by copying their corresponding value from
+/// `old_scope` into `scope`
+fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment) {
+    match ast {
+        Ast::Name(x) => {
+            if let Ok(val) = old_scope.find(x) {
+                scope.add(x.to_string(), val, false)
+            }
+        },
+        Ast::If(guard, body, other) => {
+            capture_into_scope(&*guard, scope, old_scope);
+            capture_into_scope(&*body, scope, old_scope);
+            if let Some(x) = other {
+                capture_into_scope(&*x, scope, old_scope);
+            }
+        },
+        Ast::Seq(children) => {
+            for node in children {
+                capture_into_scope(&*node, scope, old_scope);
+            }
+        },
+        Ast::Bop(left, _, right) => {
+            capture_into_scope(&*left, scope, old_scope);
+            capture_into_scope(&*right, scope, old_scope);
+        },
+        Ast::Let(name, ast) => capture_into_scope(&*ast, scope, old_scope),
+        Ast::Func(name, params, ast) => capture_into_scope(&*ast, scope, old_scope),
+        Ast::FnApply(name, args) => {
+            if let Ok(val) = old_scope.find(name) {
+                scope.add(name.to_string(), val, false);
+            }
+            for expr in args {
+                capture_into_scope(&*expr, scope, old_scope);
+            }
+        },
+        _ => (),
+
+    }
+}
+
+fn eval_fn_app(name: &String, args: &Vec<Box<Ast>>, scope: &mut impl Environment)
     -> Result<Values, String>
 {
-    if let Ok(Values::Func(params, ast, mut fn_scope)) = scope.find(name) {
+    if let Ok(Values::Func(params, ast, fn_scope)) = scope.find(name) {
         if params.len() != args.len() { 
             return Err("Arg count mismatch".to_owned()); 
         }
         let mut vals = Vec::<Values>::new();
         for arg in args {
-            match eval(*arg, scope) {
+            match eval(&*arg, scope) {
                 Ok(v) => vals.push(v),
                 e => return e,
             }
         }
-        let mut sc = ScopeProxy::new(&mut fn_scope);
+        let mut scope = fn_scope.borrow_mut();
+        let mut sc = ScopeProxy::from(&mut scope);
         for (nm, val) in params.iter().zip(vals.iter()) {
             sc.add(nm.to_string(), val.clone(), false);
         }
-        eval(ast, &mut sc)
+        eval(&ast, &mut sc)
     } else {
         Err("Variable is not a function".to_owned())
     }

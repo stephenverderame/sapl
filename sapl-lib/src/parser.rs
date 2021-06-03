@@ -79,7 +79,7 @@ fn tok_is_expr(tok: &Tokens) -> bool {
         Tokens::Integer(_) | Tokens::Float(_)
         | Tokens::Bool(_) | Tokens::TString(_)
         | Tokens::LParen | Tokens::If 
-        | Tokens::Name(_) =>
+        | Tokens::Name(_)  =>
         true,
         _ => false,
     }
@@ -110,9 +110,10 @@ fn tok_is_bop(tok: &Tokens) -> bool {
 fn tok_is_val(tok: &Tokens) -> bool {
     match tok {
         Tokens::Integer(_) | Tokens::Bool(_)
-        | Tokens::TString(_) | Tokens::Float(_)
-        | Tokens::Name(_) =>
+        | Tokens::TString(_) | Tokens::Float(_) => 
             true,
+        // a name may or may not be a value, so it must be parsed via
+        // parse expr
         _ => false,
     }
 }
@@ -169,12 +170,12 @@ fn make_bop(left: Result<Ast, String>, op: Op, right: Result<Ast, String>)
 /// Parses the right productions of a BOP (either `L` or `(E)`)
 fn parse_bop_right(stream: &mut VecDeque<Tokens>, cur_pres: i32) -> Result<Ast, String> {
     match stream.front() {
-        Some(Tokens::LParen) => parse_expr(stream),
         Some(x) if tok_is_val(&x) =>
             parse_bop(
                 tok_to_val(stream.pop_front().unwrap()).unwrap(), 
                 Some(cur_pres), stream
             ),
+        Some(x) if tok_is_expr(x) => parse_expr(stream),
         _ => Err("Bop needs right branch".to_owned()),
     }
 }
