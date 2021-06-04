@@ -352,4 +352,21 @@ mod tests {
         fact(5)
         "#, Values::Int(120));
     }
+
+    #[test]
+    fn recursion_test() {
+        assert_val_eq(r#"
+        fun summation start end {
+            fun sum_helper i {
+                if i < end:
+                    i + sum_helper(i + 1)
+                else end
+            }
+
+            sum_helper(start)
+        }
+
+        summation(0, 100)
+        "#, Values::Int(5050));
+    }
 }

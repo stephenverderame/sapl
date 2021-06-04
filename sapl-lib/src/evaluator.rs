@@ -194,6 +194,8 @@ fn eval_let(name: &String, ast: &Ast, scope: &mut impl Environment)
 }
 
 /// Evaluates a function definition and adds the function to `scope`
+/// Captures names references in `ast` that are also in `scope` by copying them into a new
+/// environment
 fn eval_func(name: &String, params: &Vec<String>, ast: &Ast, scope: &mut impl Environment)
     -> Result<Values, String>
 {
