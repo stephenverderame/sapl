@@ -44,6 +44,9 @@ enum TokenizerStates {
     ReadOperator,
     ReadLang,
     ReadId,
+    ReadSlash,
+    ReadComment(bool),
+    ReadEndComment,
 }
 
 struct TokenizerFSM {
@@ -79,7 +82,7 @@ impl TokenizerFSM {
     /// Adds a whitespace character to `line` to indicate the end of the line
     fn add_eof_to_buf(line: &[u8]) -> Vec<u8> {
         let mut b = Vec::from(line);
-        b.push(b' ');
+        b.push(b'\n');
         b
     }
     
@@ -91,6 +94,18 @@ impl TokenizerFSM {
         -> (TokenizerStates, Option<Tokens>) 
     {
         match &self.state {
+            TokenizerStates::ReadComment(true) if input == b'\n' =>
+                (TokenizerStates::Init, self.done_parse_token()),
+            TokenizerStates::ReadComment(false) if input == b'*' =>
+                (TokenizerStates::ReadEndComment, self.done_parse_token()),
+            TokenizerStates::ReadEndComment if input == b'/' =>
+                (TokenizerStates::Init, self.done_parse_token()),
+            TokenizerStates::ReadEndComment => 
+                (TokenizerStates::ReadComment(false), self.done_parse_token()),
+            TokenizerStates::ReadComment(x) =>
+                (TokenizerStates::ReadComment(*x), self.done_parse_token()),
+            
+            
             //lex strings
             //must be before everything else
             TokenizerStates::ReadString(delim) if input == *delim => 
@@ -113,11 +128,17 @@ impl TokenizerFSM {
                 if input.is_ascii_digit() => (self.state, None),
             TokenizerStates::ReadMinus if input.is_ascii_digit() =>
                 (TokenizerStates::ReadInt, None),
-            _ if input.is_ascii_digit() && self.state != TokenizerStates::ReadId 
-                => (TokenizerStates::ReadInt, self.done_parse_token()),
+            _ if input.is_ascii_digit() && self.state != TokenizerStates::ReadId =>
+                (TokenizerStates::ReadInt, self.done_parse_token()),
+
+            // lex comments
+            TokenizerStates::ReadSlash if input == b'*' || input == b'/' =>
+                (TokenizerStates::ReadComment(input == b'/'), None),
+            _ if input == b'/' => (TokenizerStates::ReadSlash, None),
 
             // lex ops
             TokenizerStates::ReadMinus | TokenizerStates::ReadOperator
+            | TokenizerStates::ReadSlash
                 if TokenizerFSM::is_op_symbol(input) => 
                     (TokenizerStates::ReadOperator, None),
              _ if TokenizerFSM::is_op_symbol(input) =>
@@ -179,6 +200,11 @@ impl TokenizerFSM {
             (TokenizerStates::ReadString(_), _) |
             (_, TokenizerStates::ReadString(_)) =>
                 self.input.push(c as char),
+            (TokenizerStates::ReadComment(_), _) | 
+            (TokenizerStates::ReadEndComment, _) | 
+            (_, TokenizerStates::ReadComment(_)) |
+            (_, TokenizerStates::ReadEndComment) => 
+                self.input.clear(),
             _ if !c.is_ascii_whitespace() =>
                 self.input.push(c as char),
             _ => (),
@@ -192,10 +218,11 @@ impl TokenizerFSM {
             TokenizerStates::ReadInt => self.parse_cur_as_int(),
             TokenizerStates::ReadFloat => self.parse_cur_as_float(),
             TokenizerStates::ReadString(_) => self.parse_cur_as_str(),
-            TokenizerStates::ReadOperator 
+            TokenizerStates::ReadOperator | TokenizerStates::ReadSlash 
             | TokenizerStates::ReadMinus => self.parse_cur_as_op(),
             TokenizerStates::ReadLang => self.parse_cur_as_lang(),
-            TokenizerStates::Init => None,
+            TokenizerStates::Init | TokenizerStates::ReadComment(_) | 
+            TokenizerStates::ReadEndComment => None,
             TokenizerStates::ReadId => self.parse_cur_as_name(),
             _ => panic!("Error converting '{}' to token in state {:?}", self.input, self.state),
         }

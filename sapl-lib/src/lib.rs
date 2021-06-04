@@ -5,6 +5,8 @@ mod evaluator;
 pub use evaluator::Values;
 use std::io::Read;
 
+/// Parses sapl code from an input stream
+/// The input stream must contain only sapl code
 pub fn parse_sapl(input: impl Read) -> Result<Values, String> {
     let mut tokens = lexer::tokenize(input);
     let ast = parser::parse(&mut tokens);
@@ -368,5 +370,24 @@ mod tests {
 
         summation(0, 100)
         "#, Values::Int(5050));
+    }
+
+    #[test]
+    fn comment_test() {
+        let tokens = lexer::tokenize(r#"
+        // comment
+        3
+        /*
+
+        56
+
+        */
+        5//hello
+
+        11/* a number */
+        12
+        "#.as_bytes());
+        assert_toks_eq(&tokens, vec![Tokens::Integer(3), Tokens::Integer(5), Tokens::Integer(11),
+            Tokens::Integer(12)]);
     }
 }

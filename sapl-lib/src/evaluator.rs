@@ -18,6 +18,7 @@ pub enum Values {
 }
 
 
+/// Evaluates a SAPL AST
 pub fn evaluate(ast: &Ast) -> Result<Values, String> {
     eval(ast, &mut Scope::new())
 }
