@@ -349,7 +349,7 @@ mod tests {
                 x * fact(x - 1)
         }
 
-        fact(2)
-        "#, Values::Int(2));
+        fact(5)
+        "#, Values::Int(120));
     }
 }

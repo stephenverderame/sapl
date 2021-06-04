@@ -2,17 +2,36 @@ use crate::evaluator::Values;
 use std::collections::HashMap;
 use std::collections::LinkedList;
 
+/// Internal Lock to prevent outside code from calling the low-level
+/// scope stack management functions
 struct Internal {}
 
 pub trait Environment {
-    fn find(&self, name: &str) -> Result<Values, String>;
+    /// Gets a value stored in this environment with the name `x`
+    fn find(&self, name: &str) -> Result<&Values, String>;
+
+    /// Adds a new value into the environment with the name `name` and 
+    /// mutability `mutable`
+    /// Will add the value to the first scope in the stack and shadow previous
+    /// values with the same name if they exist
     fn add(&mut self, name: String, val: Values, mutable: bool);
+
+    /// Updates an existing value in the environment
+    /// Returns `false` if `name` is immutable or if the value
+    /// isn't found
     fn update(&mut self, name: &str, val: Values) -> bool;
-    fn new_scope(&mut self, int: Internal);
-    fn pop_scope(&mut self, int: Internal);
+
+    /// Performs a deep copy of the environment
     fn cpy(&self) -> Scope;
+
+    /// Internal use only: creates a new sub scope
+    fn new_scope(&mut self, int: Internal);
+    
+    /// Internal use only: pops a sub scope off the scope stack
+    fn pop_scope(&mut self, int: Internal);
 }
 
+/// An environment which owns its own data
 #[derive(Clone, PartialEq, Debug)]
 pub struct Scope {
     names: LinkedList<HashMap<String, (Values, bool)>>,
@@ -28,26 +47,30 @@ impl Scope {
             },
         }
     }
+
+    /// Adds the entirety of `scope` as a child to this scope
+    /// `scope` becomes sub scopes of this scope
+    pub fn add_sub_scope(&mut self, mut scope: Scope) {
+        scope.names.append(&mut self.names);
+        self.names = scope.names
+    }
 }
 
 impl Environment for Scope {
-    fn find(&self, name: &str) -> Result<Values, String> {
+    fn find(&self, name: &str) -> Result<&Values, String> {
         for map in &self.names {
             if let Some((val, _)) = map.get(name) {
-                return Ok(val.clone());
+                return Ok(val);
             }
         }
         Err(format!("Unknown name {}", name))
         
     }
 
-    /// Adds `name` to the scope
     fn add(&mut self, name: String, val: Values, mutable: bool) {
         self.names.front_mut().unwrap().insert(name, (val, mutable));
     }
 
-    /// Updates `name` in whichever scope it exists
-    /// Returns `true` if successful, `false` otherwise
     fn update(&mut self, name: &str, val: Values) -> bool {
         for map in &mut self.names {
             match map.get_mut(name) {
@@ -78,6 +101,10 @@ impl Environment for Scope {
 
 }
 
+/// An environment which wraps another environment to create a new sub scope
+/// Handles the pushing and popping of the scope stack in its "constructor" and
+/// "destructor"
+/// RAII for `new_scope` and `pop_scope`
 pub struct ScopeProxy<'a> {
     scope: &'a mut dyn Environment,
 }
@@ -105,7 +132,7 @@ impl<'a> Drop for ScopeProxy<'a> {
 }
 
 impl<'a> Environment for ScopeProxy<'a> {
-    fn find(&self, name: &str) -> Result<Values, String> {
+    fn find(&self, name: &str) -> Result<&Values, String> {
         self.scope.find(name)
     }
     fn add(&mut self, name: String, val: Values, mutable: bool) {
@@ -122,5 +149,50 @@ impl<'a> Environment for ScopeProxy<'a> {
     }
     fn cpy(&self) -> Scope {
         self.scope.cpy()
+    }
+}
+
+/// An environment with an immutable parent scope reference and
+/// a mutable, data owning, child scope
+/// Basically strings together an immutable and owned environment into 
+/// one environment
+pub struct ImmuScope<'a> {
+    parent: &'a dyn Environment,
+    children: Scope,
+}
+
+impl<'a> ImmuScope<'a> {
+    pub fn from(parent: &impl Environment) -> ImmuScope {
+        ImmuScope {
+            parent,
+            children: Scope::new(),
+        }
+    }
+}
+
+impl<'a> Environment for ImmuScope<'a> {
+    fn find(&self, name: &str) -> Result<&Values, String> {
+        if let Ok(res) = self.children.find(name) {
+            Ok(res)
+        } else {
+            self.parent.find(name)
+        }
+    }
+    fn add(&mut self, name: String, val: Values, mutable: bool) {
+        self.children.add(name, val, mutable)
+    }
+    fn update(&mut self, name: &str, val: Values) -> bool {
+        self.children.update(name, val)
+    }
+    fn new_scope(&mut self, x: Internal) {
+        self.children.new_scope(x)
+    }
+    fn pop_scope(&mut self, x: Internal) {
+        self.children.pop_scope(x)
+    }
+    fn cpy(&self) -> Scope {
+        let mut sc = self.parent.cpy();
+        sc.add_sub_scope(self.children.cpy());
+        sc
     }
 }

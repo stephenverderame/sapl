@@ -29,7 +29,10 @@ fn eval(ast: &Ast, scope: &mut impl Environment) -> Result<Values, String> {
         Ast::VInt(x) => Ok(Values::Int(*x)),
         Ast::VStr(x) => Ok(Values::Str(x.clone())),
         Ast::VBool(x) => Ok(Values::Bool(*x)),
-        Ast::Name(x) => scope.find(x),
+        Ast::Name(x) => match scope.find(x) {
+            Ok(val) => Ok(val.clone()),
+            Err(e) => Err(e),
+        },
         Ast::Bop(left, op, right) => eval_bop(&*left, op, &*right, scope),
         Ast::If(guard, body, other) => eval_if(&*guard, &*body, other, scope),
         Ast::Seq(children) => eval_seq(children, scope),
@@ -139,6 +142,7 @@ fn promote_args(a: Values, b: Values, op: &Op) -> (Values, Values) {
     }
 }
 
+/// Evaluates an If expression
 fn eval_if(guard: &Ast, body: &Ast, other: &Option<Box<Ast>>, 
     scope: &mut impl Environment) -> Result<Values, String> 
 {
@@ -160,6 +164,7 @@ fn eval_if(guard: &Ast, body: &Ast, other: &Option<Box<Ast>>,
     }
 }
 
+/// Evaluates a sequence
 fn eval_seq(children: &Vec<Box<Ast>>, scope: &mut impl Environment) 
     -> Result<Values, String> 
 {
@@ -188,6 +193,7 @@ fn eval_let(name: &String, ast: &Ast, scope: &mut impl Environment)
     }
 }
 
+/// Evaluates a function definition and adds the function to `scope`
 fn eval_func(name: &String, params: &Vec<String>, ast: &Ast, scope: &mut impl Environment)
     -> Result<Values, String>
 {
@@ -204,7 +210,7 @@ fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment
     match ast {
         Ast::Name(x) => {
             if let Ok(val) = old_scope.find(x) {
-                scope.add(x.to_string(), val, false)
+                scope.add(x.to_string(), val.clone(), false)
             }
         },
         Ast::If(guard, body, other) => {
@@ -227,7 +233,7 @@ fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment
         Ast::Func(name, params, ast) => capture_into_scope(&*ast, scope, old_scope),
         Ast::FnApply(name, args) => {
             if let Ok(val) = old_scope.find(name) {
-                scope.add(name.to_string(), val, false);
+                scope.add(name.to_string(), val.clone(), false);
             }
             for expr in args {
                 capture_into_scope(&*expr, scope, old_scope);
@@ -238,6 +244,8 @@ fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment
     }
 }
 
+/// Evaluates a function application
+/// Requires arguments are expressions that do no modify any values in the scope
 fn eval_fn_app(name: &String, args: &Vec<Box<Ast>>, scope: &mut impl Environment)
     -> Result<Values, String>
 {
@@ -245,19 +253,17 @@ fn eval_fn_app(name: &String, args: &Vec<Box<Ast>>, scope: &mut impl Environment
         if params.len() != args.len() { 
             return Err("Arg count mismatch".to_owned()); 
         }
-        let mut vals = Vec::<Values>::new();
-        for arg in args {
-            match eval(&*arg, scope) {
-                Ok(v) => vals.push(v),
-                e => return e,
+
+        let mut sub = fn_scope.borrow().cpy();
+        let mut sc = ScopeProxy::from(&mut sub);
+        let mut immu_scope = ImmuScope::from(scope);
+        for (nm, arg) in params.iter().zip(args.iter()) {
+            match eval(&*arg, &mut immu_scope) {
+                Ok(v) => sc.add(nm.to_string(), v, false),
+                Err(e) => return Err(e),
             }
         }
-        let mut scope = fn_scope.borrow_mut();
-        let mut sc = ScopeProxy::from(&mut scope);
-        for (nm, val) in params.iter().zip(vals.iter()) {
-            sc.add(nm.to_string(), val.clone(), false);
-        }
-        eval(&ast, &mut sc)
+        eval(ast, &mut sc)
     } else {
         Err("Variable is not a function".to_owned())
     }
