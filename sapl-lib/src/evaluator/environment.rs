@@ -2,9 +2,7 @@ use crate::evaluator::Values;
 use std::collections::HashMap;
 use std::collections::LinkedList;
 
-/// Internal Lock to prevent outside code from calling the low-level
-/// scope stack management functions
-struct Internal {}
+
 
 pub trait Environment {
     /// Gets a value stored in this environment with the name `x`
@@ -25,10 +23,12 @@ pub trait Environment {
     fn cpy(&self) -> Scope;
 
     /// Internal use only: creates a new sub scope
-    fn new_scope(&mut self, int: Internal);
+    /// Should be called through the RAII `ScopeProxy`
+    fn new_scope(&mut self);
     
     /// Internal use only: pops a sub scope off the scope stack
-    fn pop_scope(&mut self, int: Internal);
+    /// Should be called through the RAII `ScopeProxy`
+    fn pop_scope(&mut self);
 }
 
 /// An environment which owns its own data
@@ -86,11 +86,11 @@ impl Environment for Scope {
         false
     }
 
-    fn new_scope(&mut self, _: Internal) {
+    fn new_scope(&mut self) {
         self.names.push_front(HashMap::<String, (Values, bool)>::new());
     }
 
-    fn pop_scope(&mut self, _: Internal) {
+    fn pop_scope(&mut self) {
         self.names.pop_front();
     }
 
@@ -111,14 +111,14 @@ pub struct ScopeProxy<'a> {
 
 impl<'a> ScopeProxy<'a> {
     pub fn new(parent: &'a mut impl Environment) -> ScopeProxy<'a> {
-        parent.new_scope(Internal {});
+        parent.new_scope();
         ScopeProxy {
             scope: parent,
         }
     }
 
     pub fn from(parent: &'a mut Scope) -> ScopeProxy<'a> {
-        parent.new_scope(Internal {});
+        parent.new_scope();
         ScopeProxy {
             scope: parent,
         }
@@ -127,7 +127,7 @@ impl<'a> ScopeProxy<'a> {
 
 impl<'a> Drop for ScopeProxy<'a> {
     fn drop(&mut self) {
-        self.scope.pop_scope(Internal {});
+        self.scope.pop_scope();
     }
 }
 
@@ -141,11 +141,11 @@ impl<'a> Environment for ScopeProxy<'a> {
     fn update(&mut self, name: &str, val: Values) -> bool {
         self.scope.update(name, val)
     }
-    fn new_scope(&mut self, x: Internal) {
-        self.scope.new_scope(x)
+    fn new_scope(&mut self) {
+        self.scope.new_scope()
     }
-    fn pop_scope(&mut self, x: Internal) {
-        self.scope.pop_scope(x)
+    fn pop_scope(&mut self) {
+        self.scope.pop_scope()
     }
     fn cpy(&self) -> Scope {
         self.scope.cpy()
@@ -184,11 +184,11 @@ impl<'a> Environment for ImmuScope<'a> {
     fn update(&mut self, name: &str, val: Values) -> bool {
         self.children.update(name, val)
     }
-    fn new_scope(&mut self, x: Internal) {
-        self.children.new_scope(x)
+    fn new_scope(&mut self) {
+        self.children.new_scope()
     }
-    fn pop_scope(&mut self, x: Internal) {
-        self.children.pop_scope(x)
+    fn pop_scope(&mut self) {
+        self.children.pop_scope()
     }
     fn cpy(&self) -> Scope {
         let mut sc = self.parent.cpy();

@@ -390,4 +390,108 @@ mod tests {
         assert_toks_eq(&tokens, vec![Tokens::Integer(3), Tokens::Integer(5), Tokens::Integer(11),
             Tokens::Integer(12)]);
     }
+
+    #[test]
+    fn higher_order_function_test() {
+        assert_val_eq(r#"
+        fun add x y {
+            x + y
+        }
+
+        fun double f x {
+            f(x, x) + f(x, x)
+        }
+
+        double(add, 10)
+        "#, Values::Int(40)); 
+        let tokens = lexer::tokenize("let add10 = add(10, ?)".as_bytes());
+        assert_toks_eq(&tokens, vec![Tokens::Let, Tokens::Name("add10".to_owned()),
+            Tokens::OpAssign, Tokens::Name("add".to_owned()), Tokens::LParen, Tokens::Integer(10),
+            Tokens::Comma, Tokens::OpQ, Tokens::RParen]);
+
+        assert_parse_str_eq("let add10 = add(10, ?)", 
+            Ast::Let("add10".to_owned(), Box::new(
+                Ast::FnApply("add".to_owned(), 
+                vec![Box::new(Ast::VInt(10)), Box::new(Ast::Placeholder)]))
+        ));
+
+        assert_val_eq(r#"
+        fun add x y {
+            x + y
+        }
+
+        let add10 = add(10, ?);
+        add10(5)
+        "#, Values::Int(15));
+
+        assert_val_eq(r#"
+        fun do_stuff x y z {
+            x - y / z
+        }
+
+        let add_dbl = do_stuff(10, ?, 30);
+        add_dbl(60)
+        "#, Values::Int(8));
+
+        assert_val_eq(r#"
+        fun log level msg code {
+            "[LOG (" + level + ")]: " + msg + " {" + code + "}"
+        }
+
+        let debug = log("DEBUG", ?, ?);
+        debug("Got Here!", 1)
+        "#, Values::Str("[LOG (DEBUG)]: Got Here! {1}".to_owned()));
+
+        assert_val_eq(r#"
+        fun inc x {
+            x + 1
+        }
+
+        5 |> inc
+        "#, Values::Int(6));
+
+        assert_val_eq(r#"
+        fun sub x y {
+            x - y
+        }
+
+        5 |> sub(?, 3)
+        "#, Values::Int(2));
+    }
+
+    #[test]
+    fn pipeline_test() {
+        assert_parse_str_eq("5 |> sub(?, 3) |> inc", Ast::Bop(
+            Box::new(Ast::Bop(
+                Box::new(Ast::VInt(5)),
+                Op::Pipeline,
+                Box::new(Ast::FnApply("sub".to_owned(), vec![Box::new(Ast::Placeholder),
+                    Box::new(Ast::VInt(3))]))
+            )), 
+            Op::Pipeline, 
+            Box::new(Ast::Name("inc".to_owned()))
+        ));
+
+
+        assert_val_eq(r#"
+        fun sub x y {
+            x - y
+        }
+
+        fun inc x {
+            x + 1
+        }
+
+        fun mul x y {
+            x * y
+        }
+
+        fun dbl_call f x {
+            f(x) + f(x)
+        }
+
+        10 |> sub(?, 4) |> inc
+           |> mul |> dbl_call(?, 10)
+        "#, Values::Int(140));
+    }
 }

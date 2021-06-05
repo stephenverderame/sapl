@@ -2,7 +2,6 @@ use crate::parser::Ast;
 use crate::parser::Op;
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::cell::RefMut;
 
 mod environment;
 use environment::*;
@@ -15,6 +14,7 @@ pub enum Values {
     Unit,
     Bool(bool),
     Func(Vec<String>, Ast, Rc<RefCell<Scope>>),
+    Placeholder
 }
 
 
@@ -40,6 +40,7 @@ fn eval(ast: &Ast, scope: &mut impl Environment) -> Result<Values, String> {
         Ast::Let(name, ast) => eval_let(name, &*ast, scope),
         Ast::Func(name, params, ast) => eval_func(name, params, &*ast, scope),
         Ast::FnApply(name, args) => eval_fn_app(name, args, scope),
+        Ast::Placeholder => Ok(Values::Placeholder),
     }
 }
 /// Evaluates `left op right`
@@ -100,6 +101,7 @@ fn perform_bop(vleft: Values, op: &Op, vright: Values) -> Result<Values, String>
 
         (Values::Bool(x), Op::Lor, Values::Bool(y)) => Ok(Values::Bool(x || y)),
         (Values::Bool(x), Op::Land, Values::Bool(y)) => Ok(Values::Bool(x && y)),
+        (val, Op::Pipeline, f) => eval_pipeline(val, f),
         (x, op, y) => 
             Err(format!("'{:?} {:?} {:?}' is an invalid Bop or invalid arguments", x, op, y))
     }
@@ -110,7 +112,6 @@ fn perform_eq_test(left: Values, op: &Op, right: Values) -> Result<Values, Strin
     match (left, op, right) {
         (Values::Int(x), Op::Eq, Values::Int(y)) => Ok(Values::Bool(x == y)),
         (Values::Bool(x), Op::Eq, Values::Bool(y)) => Ok(Values::Bool(x == y)),
-        (Values::Int(x), Op::Eq, Values::Int(y)) => Ok(Values::Bool(x == y)),
         (Values::Str(x), Op::Eq, Values::Str(y)) => Ok(Values::Bool(x.eq(&y))),
         (Values::Str(x), Op::Neq, Values::Str(y)) => Ok(Values::Bool(!x.eq(&y))),
         (Values::Unit, Op::Eq, Values::Unit) => Ok(Values::Bool(true)),
@@ -232,8 +233,8 @@ fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment
             capture_into_scope(&*left, scope, old_scope);
             capture_into_scope(&*right, scope, old_scope);
         },
-        Ast::Let(name, ast) => capture_into_scope(&*ast, scope, old_scope),
-        Ast::Func(name, params, ast) => capture_into_scope(&*ast, scope, old_scope),
+        Ast::Let(_, ast) => capture_into_scope(&*ast, scope, old_scope),
+        Ast::Func(.., ast) => capture_into_scope(&*ast, scope, old_scope),
         Ast::FnApply(name, args) => {
             if let Ok(val) = old_scope.find(name) {
                 scope.add(name.to_string(), val.clone(), false);
@@ -252,23 +253,65 @@ fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment
 fn eval_fn_app(name: &String, args: &Vec<Box<Ast>>, scope: &mut impl Environment)
     -> Result<Values, String>
 {
-    if let Ok(Values::Func(params, ast, fn_scope)) = scope.find(name) {
-        if params.len() != args.len() { 
-            return Err("Arg count mismatch".to_owned()); 
-        }
-
-        let mut sub = fn_scope.borrow().cpy();
-        let mut sc = ScopeProxy::from(&mut sub);
-        let mut immu_scope = ImmuScope::from(scope);
-        for (nm, arg) in params.iter().zip(args.iter()) {
-            match eval(&*arg, &mut immu_scope) {
-                Ok(v) => sc.add(nm.to_string(), v, false),
-                Err(e) => return Err(e),
+    if let Ok(f @ Values::Func(..)) = scope.find(name) {
+        let mut val_args = Vec::<Values>::new();
+        let mut arg_scope = ImmuScope::from(scope);
+        for expr in args {
+            match eval(&*expr, &mut arg_scope) {
+                Ok(v) => val_args.push(v),
+                e => return e,
             }
         }
-        eval(ast, &mut sc)
+        apply_function(f, val_args, false)
     } else {
         Err("Variable is not a function".to_owned())
     }
 
+}
+
+/// Evaluates the pipeline argument `left |> func`
+fn eval_pipeline(left: Values, func: Values) 
+    -> Result<Values, String> 
+{
+    apply_function(&func, vec![left], true)
+}  
+
+/// Applies `args` to the function `func`
+/// If `args` contains a placeholder, performs a partial application
+/// If `allow_incomplete` is true, assumes that if `args.len()` is less than
+/// the amount of parameters, the remaining parameters will be placeholders and a partial application
+/// will be performed
+fn apply_function(func: &Values, mut args: Vec<Values>, allow_incomplete: bool) 
+    -> Result<Values, String> 
+{
+    if let Values::Func(params, ast, fn_scope) = func {
+        if allow_incomplete && args.len() < params.len() {
+            args.append(&mut vec![Values::Placeholder; params.len() - args.len()]);
+        } else if params.len() != args.len() { 
+            return Err(format!("Arg count mismatch formals {} vs args {} and incomplete: {}",
+                params.len(), args.len(), allow_incomplete)); 
+        }
+
+        let mut sub = fn_scope.borrow().cpy();
+        let mut sc = ScopeProxy::from(&mut sub);
+        let mut is_partial = false;
+        let mut missing_params = Vec::<String>::new();
+        for (nm, arg) in params.iter().zip(args.into_iter()) {
+            match arg {
+                Values::Placeholder => {
+                    missing_params.push(nm.to_string());
+                    is_partial = true
+                },
+                v => sc.add(nm.to_string(), v, false),
+            }
+        }
+        if is_partial {
+            Ok(Values::Func(missing_params, ast.clone(), 
+                Rc::new(RefCell::new(sc.cpy()))))
+        } else {
+            eval(ast, &mut sc)
+        }
+    } else {
+        Err("Not a function being applied".to_owned())
+    }
 }

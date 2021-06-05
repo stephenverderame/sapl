@@ -9,8 +9,9 @@ pub enum Tokens {
     Bool(bool),
     OpPlus, OpMinus, OpMult, OpDiv, OpMod, OpExp,
     OpLor, OpLand, OpOr, OpAnd, OpEq, OpLt, OpGt, 
-    OpLeq, OpGeq, OpNeq, OpAssign,
+    OpLeq, OpGeq, OpNeq, OpAssign, OpQ,
     LParen, RParen, LBrace, RBrace, Colon,
+    OpPipeline,
     If, Else,
     Name(String),
     Seq, Let,
@@ -134,7 +135,7 @@ impl TokenizerFSM {
             // lex comments
             TokenizerStates::ReadSlash if input == b'*' || input == b'/' =>
                 (TokenizerStates::ReadComment(input == b'/'), None),
-            _ if input == b'/' => (TokenizerStates::ReadSlash, None),
+            _ if input == b'/' => (TokenizerStates::ReadSlash, self.done_parse_token()),
 
             // lex ops
             TokenizerStates::ReadMinus | TokenizerStates::ReadOperator
@@ -299,6 +300,8 @@ impl TokenizerFSM {
             "==" => Some(Tokens::OpEq),
             "!=" => Some(Tokens::OpNeq),
             "=" => Some(Tokens::OpAssign),
+            "?" => Some(Tokens::OpQ),
+            "|>" => Some(Tokens::OpPipeline),
             _ => panic!("'{}' is not a recognized operator", self.input),
         }
     }
