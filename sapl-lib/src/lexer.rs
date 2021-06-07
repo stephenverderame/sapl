@@ -9,8 +9,10 @@ pub enum Tokens {
     Bool(bool),
     OpPlus, OpMinus, OpMult, OpDiv, OpMod, OpExp,
     OpLor, OpLand, OpOr, OpAnd, OpEq, OpLt, OpGt, 
-    OpLeq, OpGeq, OpNeq, OpAssign, OpQ,
+    OpLeq, OpGeq, OpNeq, OpAssign, OpQ, OpDot,
+    OpNegate, OpRange,
     LParen, RParen, LBrace, RBrace, Colon,
+    LBracket, RBracket,
     OpPipeline,
     If, Else,
     Name(String),
@@ -275,7 +277,8 @@ impl TokenizerFSM {
     fn is_lang_symbol(c: u8) -> bool {
         match c {
             b'(' | b')' | b'{' | b'}'
-            | b';' | b':' | b',' => true,
+            | b';' | b':' | b',' 
+            | b'[' | b']' => true,
             _ => false,
         }
     }
@@ -302,6 +305,9 @@ impl TokenizerFSM {
             "=" => Some(Tokens::OpAssign),
             "?" => Some(Tokens::OpQ),
             "|>" => Some(Tokens::OpPipeline),
+            "." => Some(Tokens::OpDot),
+            "!" => Some(Tokens::OpNegate),
+            ".." => Some(Tokens::OpRange),
             _ => panic!("'{}' is not a recognized operator", self.input),
         }
     }
@@ -315,6 +321,8 @@ impl TokenizerFSM {
             ":" => Some(Tokens::Colon),
             ";" => Some(Tokens::Seq),
             "," => Some(Tokens::Comma),
+            "[" => Some(Tokens::LBracket),
+            "]" => Some(Tokens::RBracket),
             _ => panic!("\"{}\" is not a recognized language symbol", self.input),
         }
     }

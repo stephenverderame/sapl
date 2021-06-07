@@ -493,5 +493,74 @@ mod tests {
         10 |> sub(?, 4) |> inc
            |> mul |> dbl_call(?, 10)
         "#, Values::Int(140));
+
+        assert_val_eq(r#"
+        fun to_string x {
+            "" + x
+        }
+
+        fun concat x y {
+            x + " " + y
+        }
+
+        100 + 10 * 6 |> to_string 
+        |> concat(?, "hello")
+        "#, Values::Str("160 hello".to_owned()));
+    }
+
+    #[test]
+    fn list_test() {
+        assert_val_eq("[10, true, 10 + 10, 3.14]", Values::List(vec![Box::new(Values::Int(10)),
+        Box::new(Values::Bool(true)), Box::new(Values::Int(20)), Box::new(Values::Float(3.14))]));
+
+        assert_val_eq("[100, false, 'Hello'].size()", Values::Int(3));
+
+        assert_val_eq(r#"
+        let lst = ["hello", 100, false, 'goodbye', 8.70];
+        lst.push_back(100, 50, 80, 90).size()
+        "#, Values::Int(9));
+
+        assert_val_eq(r#"
+        [10, 30, 'hello'] == [10, 30, "hello"]
+        "#, Values::Bool(true));
+
+        assert_val_eq(r#"
+        [10, 30, 'hello'] == [10, 30, "hgllo"]
+        "#, Values::Bool(false));
+
+        /*let toks = lexer::tokenize("lst[-1 + 1]".as_bytes());
+        assert_toks_eq(&toks, vec![Tokens::Name("lst".to_owned()), Tokens::LBracket,
+            Tokens::Integer(-1), Tokens::OpPlus, Tokens::Integer(1),
+            Tokens::RBracket]);*/
+
+        assert_val_eq(r#"
+        let wd = [10, 30, 'hello'][2];
+        let lst = [3.14, 6.28, 2.73];
+        wd + lst[1 - 1]
+        "#, Values::Str("hello3.14".to_owned()));
+
+        assert_val_eq(r#"
+        let names = ['Diana', 'Lexi', 'Brady', 'Andrew', 'Martin'];
+        let names = names.push_back('Angelina', 'Garcia');
+        names[2..5] == ['Brady', 'Andrew', 'Martin', 'Angelina']
+        "#, Values::Bool(true));
+    }
+
+    #[test]
+    fn uop_test() {
+        assert_val_eq("!43", Values::Int(-43));
+        assert_val_eq("let x = true; !x", Values::Bool(false));
+        assert_val_eq("let x = 3.14; !x", Values::Float(-3.14));
+
+        assert_val_eq(r#"
+        let lst = [];
+        let idx = 10;
+        if lst? && idx?:
+            10
+        else if idx? && !(lst?):
+            11
+        else
+            12
+        "#, Values::Int(11));
     }
 }

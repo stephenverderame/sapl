@@ -14,6 +14,8 @@ pub enum Values {
     Unit,
     Bool(bool),
     Func(Vec<String>, Ast, Rc<RefCell<Scope>>),
+    List(Vec<Box<Values>>),
+    Range(Box<Values>, Box<Values>),
     Placeholder
 }
 
@@ -40,6 +42,8 @@ fn eval(ast: &Ast, scope: &mut impl Environment) -> Result<Values, String> {
         Ast::Let(name, ast) => eval_let(name, &*ast, scope),
         Ast::Func(name, params, ast) => eval_func(name, params, &*ast, scope),
         Ast::FnApply(name, args) => eval_fn_app(name, args, scope),
+        Ast::List(elems) => eval_lst(elems, scope),
+        Ast::Uop(ast, op) => eval_uop(ast, op, scope),
         Ast::Placeholder => Ok(Values::Placeholder),
     }
 }
@@ -51,15 +55,81 @@ fn eval_bop(left: &Ast, op: &Op, right: &Ast, scope: &mut impl Environment) -> R
     match (left, op) {
         (Ok(Values::Bool(true)), Op::Lor) => Ok(Values::Bool(true)),
         (Ok(Values::Bool(false)), Op::Land) => Ok(Values::Bool(false)),
+        (Ok(val), Op::Dot) => perform_dot_op(val, right, scope),
         (Ok(val), op) => {
             match (eval(right, scope), op) {
                 (Ok(right), op @ Op::Eq) | (Ok(right), op @ Op::Neq) =>
                     perform_eq_test(val, op, right),
+                (Ok(right), Op::Index) => perform_index_op(val, right),
+                (Ok(right), Op::Range) => Ok(Values::Range(Box::new(val), Box::new(right))),
                 (Ok(right), op) => perform_bop(val, op, right),
                 (e, _) => e,
             }
         },
         (e, _) => e,
+    }
+}
+
+fn eval_uop(left: &Ast, op: &Op, scope: &mut impl Environment) -> Result<Values, String> {
+    match (eval(left, scope), op) {
+        (Ok(Values::Bool(x)), Op::Neg) => Ok(Values::Bool(!x)),
+        (Ok(Values::Int(x)), Op::Neg) => Ok(Values::Int(-x)),
+        (Ok(Values::Float(x)), Op::Neg) => Ok(Values::Float(-x)),
+        (Ok(v), Op::Neg) => Err(format!("{:?} cannot be negated", v)),
+        (v, Op::AsBool) => match to_booly(v) {
+            Ok(b) => Ok(Values::Bool(b)),
+            Err(e) => Err(e),
+        },
+        (Ok(_), x) => Err(format!("{:?} is not a Uop", x)),
+        (e, _) => e,
+    }
+}
+
+/// Performs the dot operator `.` on `left.right`
+fn perform_dot_op(left: Values, right: &Ast, scope: &mut impl Environment) -> Result<Values, String> {
+    match (left, right) {
+        (Values::List(x), 
+            Ast::FnApply(name, vec)) if vec.is_empty() && name.eq("size") => 
+                Ok(Values::Int(x.len() as i32)),
+        (Values::List(mut x),
+            Ast::FnApply(name, elems)) if name.eq("push_back") => {
+                for e in elems {
+                    match eval(&*e, scope) {
+                        Ok(val) => x.push(Box::new(val)),
+                        e => return e,
+                    }
+                }
+                Ok(Values::List(x))
+            },
+        (Values::Range(fst, _),
+            Ast::FnApply(name, vec)) if name.eq("fst") && vec.is_empty() =>
+                Ok(*fst),
+        (Values::Range(_, snd),
+            Ast::FnApply(name, vec)) if name.eq("snd") && vec.is_empty() =>
+                Ok(*snd),
+        _ => Err("unrecognized member".to_owned())
+    }
+}
+
+/// Indexes `right` from `left`
+fn perform_index_op(left: Values, right: Values) -> Result<Values, String> {
+    match (left, right) {
+        (Values::List(mut x), Values::Int(idx)) => {
+            if idx < x.len() as i32 && idx >= 0 {
+                Ok(*(x.swap_remove(idx as usize)))
+            } else {
+                Err(format!("Index out of bounds error {:?} has no index {:?}", x, idx))
+            }
+        },
+        (Values::List(x), Values::Range(min, max)) => {
+            if let (Values::Int(min), Values::Int(max)) = (*min, *max) {
+                if min <= max && min > 0 && max < x.len() as i32 {
+                    return Ok(Values::List(x.get(min as usize..max as usize).unwrap().to_vec()));
+                }
+            }
+            Err("Invalid range for indexer".to_owned())
+        }
+        _ => Err(format!("Unrecognized indexer")),
     }
 }
 
@@ -114,6 +184,8 @@ fn perform_eq_test(left: Values, op: &Op, right: Values) -> Result<Values, Strin
         (Values::Bool(x), Op::Eq, Values::Bool(y)) => Ok(Values::Bool(x == y)),
         (Values::Str(x), Op::Eq, Values::Str(y)) => Ok(Values::Bool(x.eq(&y))),
         (Values::Str(x), Op::Neq, Values::Str(y)) => Ok(Values::Bool(!x.eq(&y))),
+        (Values::List(x), Op::Eq, Values::List(y)) => Ok(Values::Bool(x == y)),
+        (Values::List(x), Op::Neq, Values::List(y)) => Ok(Values::Bool(x != y)),
         (Values::Unit, Op::Eq, Values::Unit) => Ok(Values::Bool(true)),
         (_, Op::Eq, _) => Ok(Values::Bool(false)),
         (x, Op::Neq, y) if x != y => Ok(Values::Bool(true)),
@@ -148,21 +220,34 @@ fn promote_args(a: Values, b: Values, op: &Op) -> (Values, Values) {
 fn eval_if(guard: &Ast, body: &Ast, other: &Option<Box<Ast>>, 
     scope: &mut impl Environment) -> Result<Values, String> 
 {
-    match eval(guard, scope) {
-        Ok(Values::Bool(true)) => eval(body, &mut ScopeProxy::new(scope)),
-        Ok(Values::Str(x)) if !x.is_empty() => eval(body, &mut ScopeProxy::new(scope)),
-        Ok(Values::Int(x)) if x != 0 => eval(body, &mut ScopeProxy::new(scope)),
-        Ok(Values::Bool(false)) | Ok(Values::Str(_))
-        | Ok(Values::Int(_)) => {
+    match to_booly(eval(guard, scope)) {
+        Ok(true) => eval(body, &mut ScopeProxy::new(scope)),
+        Ok(false) => {
             if let Some(ast) = other {
                 eval(&*ast, &mut ScopeProxy::new(scope))
             } else {
                 Ok(Values::Unit)
             }
         },
-        Ok(_) => 
-            Err("Condition must operate on Boolean, Integer, or String".to_owned()),
-        x => x,
+        Err(e) => Err(e),
+    }
+}
+
+/// Converts a value `b` into the closest boole equivalent
+/// Non-empty strings and lists, true booleans, non zero ints and floats 
+/// and ranges with different first and second elements
+/// become true
+/// Everything else becomes false
+fn to_booly(b: Result<Values, String>) -> Result<bool, String> {
+    match b {
+        Ok(Values::Bool(true)) => Ok(true),
+        Ok(Values::Int(x)) if x != 0 => Ok(true),
+        Ok(Values::Str(x)) if !x.is_empty() => Ok(true),
+        Ok(Values::Float(x)) if x.abs() > 0.0001 => Ok(true),
+        Ok(Values::List(x)) if !x.is_empty() => Ok(true),
+        Ok(Values::Range(a, b)) if a != b => Ok(true),
+        Ok(_) => Ok(false),
+        Err(e) => Err(e),
     }
 }
 
@@ -243,6 +328,7 @@ fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment
                 capture_into_scope(&*expr, scope, old_scope);
             }
         },
+        Ast::Uop(ast, _) => capture_into_scope(&*ast, scope, old_scope),
         _ => (),
 
     }
@@ -314,4 +400,16 @@ fn apply_function(func: &Values, mut args: Vec<Values>, allow_incomplete: bool)
     } else {
         Err("Not a function being applied".to_owned())
     }
+}
+
+/// Evaluates a list of asts into a list of values
+fn eval_lst(elems: &Vec<Box<Ast>>, scope: &mut impl Environment) -> Result<Values, String> {
+    let mut lst = Vec::<Box<Values>>::new();
+    for expr in elems {
+        match eval(expr, scope) {
+            Ok(val) => lst.push(Box::new(val)),
+            e => return e,
+        }
+    }
+    Ok(Values::List(lst))
 }

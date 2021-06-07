@@ -5,8 +5,10 @@ use std::collections::VecDeque;
 pub enum Op {
     Plus, Mult, Div, Mod, Sub, Exp,
     Land, Lor, And, Or, Lt, Gt, Eq,
-    Neq, Leq, Geq,
-    Pipeline,
+    Neq, Leq, Geq, Range,
+    Pipeline, Dot, Neg,
+    AsBool,
+    Index,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -22,7 +24,9 @@ pub enum Ast {
     Name(String),
     Func(String, Vec<String>, Box<Ast>),
     FnApply(String, Vec<Box<Ast>>),
+    List(Vec<Box<Ast>>),
     Placeholder,
+    Uop(Box<Ast>, Op),
 }
 
 /// Parses a stream of tokens `stream` into an Abstract Syntax Tree
@@ -37,7 +41,7 @@ fn parse_single(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
             parse_expr(stream, None),
         Some(x) if tok_is_defn(&x) =>
             parse_defn(stream),
-        _ => Err("unknown parse".to_owned()),
+        x => Err(format!("Expected expression, got {:?}", x)),
     }
 }
 
@@ -82,7 +86,8 @@ fn tok_is_expr(tok: &Tokens) -> bool {
         Tokens::Integer(_) | Tokens::Float(_)
         | Tokens::Bool(_) | Tokens::TString(_)
         | Tokens::LParen | Tokens::If 
-        | Tokens::Name(_) | Tokens::OpQ =>
+        | Tokens::Name(_) | Tokens::OpQ 
+        | Tokens::LBracket | Tokens::OpNegate =>
         true,
         _ => false,
     }
@@ -104,7 +109,8 @@ fn tok_is_bop(tok: &Tokens) -> bool {
         | Tokens::OpLand | Tokens::OpLor | Tokens::OpMult 
         | Tokens::OpLeq | Tokens::OpEq | Tokens::OpLt 
         | Tokens::OpNeq | Tokens::OpGeq | Tokens::OpGt
-        | Tokens::OpPipeline
+        | Tokens::OpPipeline | Tokens::OpDot 
+        | Tokens::OpRange
         => true,
         _ => false,
     }
@@ -182,13 +188,16 @@ fn parse_bop_right(stream: &mut VecDeque<Tokens>, cur_pres: i32) -> Result<Ast, 
 /// Larger number indicates higher priority
 fn precedence(op: Op) -> i32 {
     match op {
-        Op::Exp => 6,
-        Op::Mult | Op::Mod | Op::Div | Op::And => 5,
-        Op::Plus | Op::Sub | Op::Or => 4,
-        Op::Eq | Op::Neq | Op::Leq | Op::Geq | Op::Lt | Op::Gt => 3,
-        Op::Land => 2,
-        Op::Lor => 1,
-        Op::Pipeline => 0,
+        Op::Index | Op::Neg | Op::AsBool => 11,
+        Op::Exp => 10,
+        Op::Mult | Op::Mod | Op::Div | Op::And => 9,
+        Op::Plus | Op::Sub | Op::Or => 8,
+        Op::Eq | Op::Neq | Op::Leq | Op::Geq | Op::Lt | Op::Gt => 7,
+        Op::Land => 6,
+        Op::Lor => 5,
+        Op::Dot => 4,
+        Op::Pipeline => 3,
+        Op::Range => 2,
     }
 }
 
@@ -211,6 +220,9 @@ fn tok_to_op(tok: &Tokens) -> Option<Op> {
         Tokens::OpEq => Some(Op::Eq),
         Tokens::OpNeq => Some(Op::Neq),
         Tokens::OpPipeline => Some(Op::Pipeline),
+        Tokens::OpDot => Some(Op::Dot),
+        Tokens::OpNegate => Some(Op::Neg),
+        Tokens::OpRange => Some(Op::Range),
         _ => None,
     }
 }
@@ -226,6 +238,11 @@ fn parse_expr(stream: &mut VecDeque<Tokens>, parent_precedence: Option<i32>) -> 
     match stream.front() {
         Some(x) if tok_is_bop(x) =>
             parse_bop(left.unwrap(), parent_precedence, stream),
+        Some(x) if tok_is_post_uop(x) =>
+            match parse_post_uop(left.unwrap(), stream) {
+                Ok(ast) => parse_bop(ast, parent_precedence, stream),
+                e => e,
+            }
         Some(_) =>
         //if *x == Tokens::RParen =>
             left,
@@ -246,6 +263,8 @@ fn parse_expr_left(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
             consume(stream);
             Ok(Ast::Placeholder)
         },
+        Some(Tokens::LBracket) => parse_list(consume(stream)),
+        Some(tok) if tok_is_pre_uop(tok) => parse_pre_uop(stream),
         Some(tok) if tok_is_val(tok) => tok_to_val(stream.pop_front().unwrap()),
         t => Err(format!("Unexpected {:?} in expr left branch", t)),
     }
@@ -272,7 +291,7 @@ fn parse_conditional(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
         (Ok(guard), Some(tok @ Tokens::Colon)) |
         (Ok(guard), Some(tok @ Tokens::LBrace)) => 
             parse_if_body(guard, tok, stream),
-        (Ok(_), _) => Err("Missing colon or { after If".to_owned()),
+        (Ok(_), t) => Err(format!("Got {:?} instead of colon or bracket after if", t)),
         (e @ Err(_), _) => e,
     } 
 }
@@ -391,6 +410,90 @@ fn parse_func(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
 
     } else {
         Err("Missing function name".to_owned())
+    }
+}
+
+/// Parses a series of tokens within a `[]` as a list
+/// Requires the first `[` has been consumed
+fn parse_list(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
+    let mut lst = Vec::<Box<Ast>>::new();
+    loop {
+        match parse_expr(stream, None) {
+            Ok(expr) => lst.push(Box::new(expr)),
+            _ => break,
+        }
+        if stream.front() == Some(&Tokens::Comma) {
+            consume(stream);
+        } else {
+            break;
+        }
+    }
+    if stream.pop_front() != Some(Tokens::RBracket) {
+        Err("List missing ending bracket".to_owned())
+    } else {
+        Ok(Ast::List(lst))
+    }
+}
+
+/// True if `tok` is a post value unary operator
+/// Ie. the index operator `lst[i]`
+fn tok_is_post_uop(tok: &Tokens) -> bool {
+    match *tok {
+        Tokens::LBracket | Tokens::OpQ => true,
+        _ => false,
+    }
+}
+
+/// True if `tok` is a pre value unary operator
+/// Ie. the negation operator `~val`
+fn tok_is_pre_uop(tok: &Tokens) -> bool {
+    match *tok {
+        Tokens::OpNegate => true,
+        _ => false,
+    }
+}
+
+/// Parses a post value uop
+/// Requires that the uop is currently the first element in the stream
+fn parse_post_uop(left: Ast, stream: &mut VecDeque<Tokens>)
+    -> Result<Ast, String>
+{
+    match stream.pop_front() {
+        Some(Tokens::LBracket) => parse_index_op(left, stream),
+        Some(Tokens::OpQ) => Ok(Ast::Uop(Box::new(left), Op::AsBool)),
+        e => Err(format!("Unexpected post UOP token {:?}", e)),
+    }
+}
+
+/// Parses a pre value uop
+/// Requires the uop is the first element in the stream
+fn parse_pre_uop(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
+    let op = tok_to_op(stream.front().unwrap()).unwrap();
+    consume(stream);
+    let right = 
+    match stream.front() {
+        Some(Tokens::LParen) | Some(Tokens::Name(_)) => parse_expr(stream, None),
+        Some(x) if tok_is_val(x) => parse_expr(stream, None),
+        x => return Err(format!("Unexpected {:?} after Uop", x)),
+    };
+    match right {
+        Ok(right) => Ok(Ast::Uop(Box::new(right), op)),
+        e => e,
+    }
+
+}
+
+/// Parses the uop post operator `[]`. Requires the first bracket has been consumed
+fn parse_index_op(left: Ast, stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
+    let idx = 
+    match parse_expr(stream, None) {
+        Ok(idx) => idx,
+        e => return e,
+    };
+    if stream.pop_front() != Some(Tokens::RBracket) {
+        Err("Missing right bracket in index operation".to_owned())
+    } else {
+        Ok(Ast::Bop(Box::new(left), Op::Index, Box::new(idx)))
     }
 }
 
