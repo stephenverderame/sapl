@@ -1,5 +1,6 @@
 use crate::lexer::Tokens;
 use std::collections::VecDeque;
+use std::collections::HashMap;
 
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub enum Op {
@@ -20,13 +21,16 @@ pub enum Ast {
     Bop(Box<Ast>, Op, Box<Ast>),
     If(Box<Ast>, Box<Ast>, Option<Box<Ast>>),
     Seq(Vec<Box<Ast>>),
-    Let(String, Box<Ast>),
+    Let(Vec<String>, Box<Ast>),
     Name(String),
     Func(String, Vec<String>, Box<Ast>),
+    Lambda(Vec<String>, Box<Ast>),
     FnApply(String, Vec<Box<Ast>>),
-    List(Vec<Box<Ast>>),
+    Array(Vec<Box<Ast>>),
+    Tuple(Vec<Box<Ast>>),
     Placeholder,
     Uop(Box<Ast>, Op),
+    Map(HashMap<String, Box<Ast>>),
 }
 
 /// Parses a stream of tokens `stream` into an Abstract Syntax Tree
@@ -87,7 +91,8 @@ fn tok_is_expr(tok: &Tokens) -> bool {
         | Tokens::Bool(_) | Tokens::TString(_)
         | Tokens::LParen | Tokens::If 
         | Tokens::Name(_) | Tokens::OpQ 
-        | Tokens::LBracket | Tokens::OpNegate =>
+        | Tokens::LBracket | Tokens::OpNegate 
+        | Tokens::LBrace =>
         true,
         _ => false,
     }
@@ -263,7 +268,9 @@ fn parse_expr_left(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
             consume(stream);
             Ok(Ast::Placeholder)
         },
-        Some(Tokens::LBracket) => parse_list(consume(stream)),
+        Some(Tokens::LBracket) => parse_array(consume(stream)),
+        Some(Tokens::LBrace) => parse_map(consume(stream)),
+        Some(Tokens::Fun) => parse_func(consume(stream)),
         Some(tok) if tok_is_pre_uop(tok) => parse_pre_uop(stream),
         Some(tok) if tok_is_val(tok) => tok_to_val(stream.pop_front().unwrap()),
         t => Err(format!("Unexpected {:?} in expr left branch", t)),
@@ -278,9 +285,29 @@ fn parse_paren_expr(stream: &mut VecDeque<Tokens>) -> Result<Ast, String>
     if let Ok(ast) = expr {
         match stream.pop_front() {
             Some(Tokens::RParen) => Ok(ast),
+            Some(Tokens::Comma) => parse_tuple(ast, stream),
             _ => Err("Missing closing parenthesis".to_owned()),
         }
     } else {expr}
+}
+
+fn parse_tuple(first: Ast, stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
+    let mut elems = vec![Box::new(first)];
+    loop {
+        match parse_expr(stream, None) {
+            Ok(ast) => {
+                elems.push(Box::new(ast));
+                if stream.front() != Some(&Tokens::Comma) { break; }
+            },
+            e => return e,
+        }
+        stream.pop_front();
+    }
+    if stream.pop_front() != Some(Tokens::RParen) {
+        Err("Unknown token after tuple. Expected )".to_owned())
+    } else {
+        Ok(Ast::Tuple(elems))
+    }
 }
 
 /// Parses an `If`
@@ -375,47 +402,86 @@ fn parse_defn(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
 /// Requires `let` has already been consumed
 fn parse_let(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
     if let Some(Tokens::Name(nm)) = stream.pop_front() {
+        let mut names = vec![nm];
+
+        while stream.front() == Some(&Tokens::Comma) {
+            stream.pop_front();
+            if let Some(Tokens::Name(nm)) = stream.pop_front() {
+                names.push(nm)
+            } else {
+                return Err("Missing valid identifier in structured binding".to_owned())
+            }
+        }
+
         if stream.pop_front() != Some(Tokens::OpAssign) { 
             return Err("Missing '=' in let defn".to_owned())
         }
         let val = parse_expr(stream, None);
         if val.is_err() { return val; }
-        Ok(Ast::Let(nm, Box::new(val.unwrap())))
+        Ok(Ast::Let(names, Box::new(val.unwrap())))
     } else {
         Err("Missing valid identifier name in let".to_owned())
     }
 }
 
-/// Parses a function definition
+/// Parses a function definition or expression
 /// Requires `fun` has already been consumed
 fn parse_func(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
-    if let Some(Tokens::Name(fn_name)) = stream.pop_front() {
-        let mut params = Vec::<String>::new();
-        while let Some(Tokens::Name(_)) = stream.front() {
-            if let Some(Tokens::Name(param)) = stream.pop_front() {
-                params.push(param);
-            } else { panic!("WTF"); }
-        }
-        if Some(Tokens::LBrace) != stream.pop_front() {
-            return Err("Missing brace".to_owned())
-        }
-        let expr = parse(stream);
-        if Some(Tokens::RBrace) != stream.pop_front() {
-            Err("Missing closing brace".to_owned())
-        } else if expr.is_err() {
-            expr
-        } else {
-            Ok(Ast::Func(fn_name, params, Box::new(expr.unwrap())))
-        }
+    match stream.pop_front() {
+        Some(Tokens::Name(fn_name)) => {
+            let params = get_function_params(stream);
+            match get_function_body(stream, true) {
+                Ok(body) => Ok(Ast::Func(fn_name, params, Box::new(body))),
+                e => e,
+            }
+        },
+        Some(Tokens::LParen) => {
+            let params = get_function_params(stream);
+            if stream.pop_front() != Some(Tokens::RParen) {
+                Err("Lambda missing closing parenthesis".to_owned())
+            } else {
+                match get_function_body(stream, false) {
+                    Ok(body) => Ok(Ast::Lambda(params, Box::new(body))),
+                    e => e,
+                }
+            }
+        },
+        x => Err(format!("Unexpected token {:?} in function definition", x))
+    } 
+}
 
-    } else {
-        Err("Missing function name".to_owned())
+/// Parses a function's parameters
+/// Requires the first name is the first token in the stream
+fn get_function_params(stream: &mut VecDeque<Tokens>) -> Vec<String> {
+    let mut params = Vec::<String>::new();
+    while let Some(Tokens::Name(_)) = stream.front() {
+        if let Some(Tokens::Name(param)) = stream.pop_front() {
+            params.push(param);
+        } else { panic!("WTF"); }
     }
+    params
+}
+
+/// Parses a function body
+/// Requires the opening curly brace is the first in the queue
+/// `need_brace`: true if the function body must be surrounded by braces
+fn get_function_body(stream: &mut VecDeque<Tokens>, need_brace: bool) -> Result<Ast, String> {
+    let is_brace = stream.front() == Some(&Tokens::LBrace);
+    if !is_brace && need_brace {
+        return Err("Missing brace in function body".to_owned());
+    } else if is_brace {
+        consume(stream);
+    }
+    let expr = if !is_brace { parse_expr(stream, None) } else { parse(stream) };
+    if is_brace && Some(Tokens::RBrace) != stream.pop_front() {
+        return Err("Missing closing brace in function body".to_owned())
+    }
+    expr
 }
 
 /// Parses a series of tokens within a `[]` as a list
 /// Requires the first `[` has been consumed
-fn parse_list(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
+fn parse_array(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
     let mut lst = Vec::<Box<Ast>>::new();
     loop {
         match parse_expr(stream, None) {
@@ -431,7 +497,7 @@ fn parse_list(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
     if stream.pop_front() != Some(Tokens::RBracket) {
         Err("List missing ending bracket".to_owned())
     } else {
-        Ok(Ast::List(lst))
+        Ok(Ast::Array(lst))
     }
 }
 
@@ -501,4 +567,31 @@ fn parse_index_op(left: Ast, stream: &mut VecDeque<Tokens>) -> Result<Ast, Strin
 fn consume(stream: &mut VecDeque<Tokens>) -> &mut VecDeque<Tokens> {
     stream.pop_front();
     stream
+}
+
+/// Parses a map
+/// Requires the first brace has been consumed
+fn parse_map(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
+    let mut map = HashMap::<String, Box<Ast>>::new();
+    loop {
+        match stream.pop_front() {
+            Some(Tokens::Name(x)) | Some(Tokens::TString(x)) => {
+                if Some(Tokens::Colon) != stream.pop_front() { 
+                    return Err("Map missing colon after name".to_owned());
+                }
+                match parse_expr(stream, None) {
+                    Ok(val) => map.insert(x, Box::new(val)),
+                    e => return e,
+                };
+                if Some(&Tokens::Comma) != stream.front() { break; }
+                else { consume(stream); }
+        } _ =>
+            return Err("Map missing named identifier".to_owned()),
+        }
+    }
+    if Some(Tokens::RBrace) != stream.pop_front() {
+        Err("Map missing closing brace".to_owned())
+    } else {
+        Ok(Ast::Map(map))
+    }
 }

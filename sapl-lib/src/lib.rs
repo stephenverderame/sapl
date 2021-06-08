@@ -27,6 +27,7 @@ mod tests {
     use crate::parser::Op;
     use crate::evaluator::Values;
     use std::collections::VecDeque;
+    use std::collections::HashMap;
 
     fn assert_toks_eq(left: &VecDeque<Tokens>, right: Vec<Tokens>) {
         assert_eq!(*left, VecDeque::from(right));
@@ -289,7 +290,7 @@ mod tests {
     #[test]
     fn let_test() {
         assert_parse_str_eq("let x = 5; x", Ast::Seq(vec![
-            Box::new(Ast::Let("x".to_owned(), Box::new(Ast::VInt(5)))),
+            Box::new(Ast::Let(vec!["x".to_owned()], Box::new(Ast::VInt(5)))),
             Box::new(Ast::Name("x".to_owned()))
         ]));
         assert_val_eq("let x = 5; x", Values::Int(5));
@@ -410,7 +411,7 @@ mod tests {
             Tokens::Comma, Tokens::OpQ, Tokens::RParen]);
 
         assert_parse_str_eq("let add10 = add(10, ?)", 
-            Ast::Let("add10".to_owned(), Box::new(
+            Ast::Let(vec!["add10".to_owned()], Box::new(
                 Ast::FnApply("add".to_owned(), 
                 vec![Box::new(Ast::VInt(10)), Box::new(Ast::Placeholder)]))
         ));
@@ -510,7 +511,7 @@ mod tests {
 
     #[test]
     fn list_test() {
-        assert_val_eq("[10, true, 10 + 10, 3.14]", Values::List(vec![Box::new(Values::Int(10)),
+        assert_val_eq("[10, true, 10 + 10, 3.14]", Values::Array(vec![Box::new(Values::Int(10)),
         Box::new(Values::Bool(true)), Box::new(Values::Int(20)), Box::new(Values::Float(3.14))]));
 
         assert_val_eq("[100, false, 'Hello'].size()", Values::Int(3));
@@ -542,7 +543,7 @@ mod tests {
         assert_val_eq(r#"
         let names = ['Diana', 'Lexi', 'Brady', 'Andrew', 'Martin'];
         let names = names.push_back('Angelina', 'Garcia');
-        names[2..5] == ['Brady', 'Andrew', 'Martin', 'Angelina']
+        names[2..6] == ['Brady', 'Andrew', 'Martin', 'Angelina']
         "#, Values::Bool(true));
     }
 
@@ -562,5 +563,99 @@ mod tests {
         else
             12
         "#, Values::Int(11));
+    }
+
+    #[test]
+    fn lambda_test() {
+        assert_val_eq(r#"
+        let lam = fun (x y) x + y;
+        lam(10, 20)
+        "#, Values::Int(30));
+
+        assert_val_eq(r#"
+        let min_max = fun (x y z) {
+            let min = if x < y && x < z: x
+                else if y < x && y < z: y
+                else z;
+            let max = if x > y && x > z: x
+                else if y > x && y > z: y
+                else z;
+            (min, max)
+        };
+        let min, max = min_max(10, 50, -100);
+        min + max
+        "#, Values::Int(-50));
+
+        assert_val_eq(r#"
+        let countdown = fun (x) {
+            if x <= 0: 0
+            else {
+                x + this(x - 1)
+            }
+        };
+        countdown(10)
+        "#
+        , Values::Int(55));
+    }
+
+    #[test]
+    fn tuple_test() {
+        assert_val_eq("let x, y = (10, 20); x + y", Values::Int(30));
+        assert_val_eq("let tup = (10, 'a', 'c'); let a, b, c = tup; a + b + c", 
+            Values::Str("10ac".to_owned()));
+        assert_val_eq("let min, max = -1..100; min - max", Values::Int(-101));
+        assert_val_eq("let _, _, name = (42, 'Corsair', 'Jim'); name", Values::Str("Jim".to_owned()));
+    }
+
+    #[should_panic]
+    #[test]
+    fn bad_binding() {
+        assert_val_eq("let x, y = (1, 2, 3)", Values::Unit);
+    }
+
+    #[test]
+    fn map_test() {
+        let mut m = HashMap::<String, Box<Values>>::new();
+        m.insert("name".to_owned(), Box::new(Values::Str("Billy".to_owned())));
+        m.insert("age".to_owned(), Box::new(Values::Int(53)));
+        assert_val_eq("{name: 'Billy', 'age': 53 }", Values::Map(m));
+
+        assert_val_eq(r#"
+        let map = {
+            name: 'Jill',
+            aliases: ('J', 'Jillian'),
+            age: 20,
+            speak: fun (name nicks age) {
+                let n1, n2 = nicks;
+                "Hello, my name is " + name
+                + ", but you can call me " + n1 
+                + " or " + n2 + ". I am " + age
+                + " years old."
+            }
+        };
+        map.speak(map.name, map.aliases, map.age)
+        "#, Values::Str("Hello, my name is Jill, but you can call me J or Jillian. I am 20 years old.".to_owned()));
+
+        r#"
+        interface Being {
+            def name;
+            fun speak();
+        }
+        class Person impl Being {
+            def name, age;
+            pub name;
+
+            fun ctor name {
+                self.name = name;
+                self.age = 0;
+            }
+
+            fun speak {
+
+            }
+        }
+
+        let p = Person('John')
+        "#
     }
 }

@@ -40,6 +40,7 @@ pub fn tokenize(reader: impl Read) -> VecDeque<Tokens> {
 enum TokenizerStates {
     Init,
     ReadInt,
+    ReadIntDot,
     ReadFloat,
     ReadError,
     ReadMinus,
@@ -122,9 +123,11 @@ impl TokenizerFSM {
 
             // lex numbers
             TokenizerStates::ReadInt if input == b'.' => 
-                (TokenizerStates::ReadFloat, None),
+                (TokenizerStates::ReadIntDot, None),
             TokenizerStates::Init if input == b'-' => 
                 (TokenizerStates::ReadMinus, None),
+            TokenizerStates::ReadIntDot if input.is_ascii_digit() =>
+                (TokenizerStates::ReadFloat, None),
             TokenizerStates::ReadFloat if input == b'.' =>
                 (TokenizerStates::ReadError, None),
             TokenizerStates::ReadInt | TokenizerStates::ReadFloat
@@ -133,6 +136,9 @@ impl TokenizerFSM {
                 (TokenizerStates::ReadInt, None),
             _ if input.is_ascii_digit() && self.state != TokenizerStates::ReadId =>
                 (TokenizerStates::ReadInt, self.done_parse_token()),
+
+            TokenizerStates::ReadIntDot =>
+                (TokenizerFSM::state_of_input(input), self.done_parse_token()),
 
             // lex comments
             TokenizerStates::ReadSlash if input == b'*' || input == b'/' =>
@@ -170,7 +176,6 @@ impl TokenizerFSM {
     fn state_of_input(c: u8) -> TokenizerStates {
         match c {
             s if s.is_ascii_digit() => TokenizerStates::ReadInt,
-            b'.' => TokenizerStates::ReadFloat,
             b'-' => TokenizerStates::ReadMinus,
             b'\'' => TokenizerStates::ReadString(b'\''),
             b'"' => TokenizerStates::ReadString(b'"'),
@@ -188,7 +193,14 @@ impl TokenizerFSM {
         tok: Option<Tokens>)
     {
         if let Some(x) = tok {
-            self.input.clear();
+            if self.state == TokenizerStates::ReadIntDot {
+                match self.input.find('.') {
+                    Some(idx) => self.input.replace_range(0..idx, ""),
+                    _ => self.input.clear(),
+                }
+            } else {
+                self.input.clear();
+            }
             stream.push_back(x)    
         } 
 
@@ -227,6 +239,7 @@ impl TokenizerFSM {
             TokenizerStates::Init | TokenizerStates::ReadComment(_) | 
             TokenizerStates::ReadEndComment => None,
             TokenizerStates::ReadId => self.parse_cur_as_name(),
+            TokenizerStates::ReadIntDot => self.parse_int_to_dot(),
             _ => panic!("Error converting '{}' to token in state {:?}", self.input, self.state),
         }
     }
@@ -247,6 +260,21 @@ impl TokenizerFSM {
         match &self.input.parse::<f64>() {
             Err(_) => panic!("Cannot parse float"),
             Ok(x) => Some(Tokens::Float(*x)),
+        }
+    }
+
+    /// Parses the current input buffer up to the first `.` as an int
+    fn parse_int_to_dot(&self) -> Option<Tokens> {
+        match &self.input.find('.') {
+            Some(s) => match 
+            String::from_utf8(
+                self.input.as_bytes()[0..*s].to_vec()
+                ).unwrap().parse::<i32>() 
+            {
+                Err(_) => panic!("Cannot parse int: {}", &self.input),
+                Ok(x) => Some(Tokens::Integer(x)),
+            },
+            _ => self.parse_cur_as_int(),
         }
     }
 

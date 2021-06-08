@@ -2,6 +2,7 @@ use crate::parser::Ast;
 use crate::parser::Op;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::collections::HashMap;
 
 mod environment;
 use environment::*;
@@ -14,8 +15,10 @@ pub enum Values {
     Unit,
     Bool(bool),
     Func(Vec<String>, Ast, Rc<RefCell<Scope>>),
-    List(Vec<Box<Values>>),
+    Array(Vec<Box<Values>>),
+    Tuple(Vec<Box<Values>>),
     Range(Box<Values>, Box<Values>),
+    Map(HashMap<String, Box<Values>>),
     Placeholder
 }
 
@@ -41,9 +44,15 @@ fn eval(ast: &Ast, scope: &mut impl Environment) -> Result<Values, String> {
         Ast::Seq(children) => eval_seq(children, scope),
         Ast::Let(name, ast) => eval_let(name, &*ast, scope),
         Ast::Func(name, params, ast) => eval_func(name, params, &*ast, scope),
-        Ast::FnApply(name, args) => eval_fn_app(name, args, scope),
-        Ast::List(elems) => eval_lst(elems, scope),
+        Ast::Lambda(params, ast) => eval_lambda(params, &*ast, scope),
+        Ast::FnApply(name, args) => match scope.find(name) {
+            Ok(val) => eval_fn_app(val, args, &mut ImmuScope::from(scope)),
+            Err(e) => Err(e),
+        },
+        Ast::Array(elems) => eval_arr(elems, scope, false),
         Ast::Uop(ast, op) => eval_uop(ast, op, scope),
+        Ast::Tuple(elems) => eval_arr(elems, scope, true),
+        Ast::Map(es) => eval_map(es, scope),
         Ast::Placeholder => Ok(Values::Placeholder),
     }
 }
@@ -88,10 +97,10 @@ fn eval_uop(left: &Ast, op: &Op, scope: &mut impl Environment) -> Result<Values,
 /// Performs the dot operator `.` on `left.right`
 fn perform_dot_op(left: Values, right: &Ast, scope: &mut impl Environment) -> Result<Values, String> {
     match (left, right) {
-        (Values::List(x), 
+        (Values::Array(x), 
             Ast::FnApply(name, vec)) if vec.is_empty() && name.eq("size") => 
                 Ok(Values::Int(x.len() as i32)),
-        (Values::List(mut x),
+        (Values::Array(mut x),
             Ast::FnApply(name, elems)) if name.eq("push_back") => {
                 for e in elems {
                     match eval(&*e, scope) {
@@ -99,7 +108,7 @@ fn perform_dot_op(left: Values, right: &Ast, scope: &mut impl Environment) -> Re
                         e => return e,
                     }
                 }
-                Ok(Values::List(x))
+                Ok(Values::Array(x))
             },
         (Values::Range(fst, _),
             Ast::FnApply(name, vec)) if name.eq("fst") && vec.is_empty() =>
@@ -107,6 +116,10 @@ fn perform_dot_op(left: Values, right: &Ast, scope: &mut impl Environment) -> Re
         (Values::Range(_, snd),
             Ast::FnApply(name, vec)) if name.eq("snd") && vec.is_empty() =>
                 Ok(*snd),
+        (Values::Map(map), Ast::Name(nm)) if map.contains_key(nm) =>
+            Ok((**(map.get(nm).unwrap())).clone()),
+        (Values::Map(map), Ast::FnApply(fn_name, args)) if map.contains_key(fn_name) =>
+            eval_fn_app(map.get(fn_name).unwrap(), args, scope),
         _ => Err("unrecognized member".to_owned())
     }
 }
@@ -114,17 +127,22 @@ fn perform_dot_op(left: Values, right: &Ast, scope: &mut impl Environment) -> Re
 /// Indexes `right` from `left`
 fn perform_index_op(left: Values, right: Values) -> Result<Values, String> {
     match (left, right) {
-        (Values::List(mut x), Values::Int(idx)) => {
+        (Values::Array(mut x), Values::Int(idx)) => {
             if idx < x.len() as i32 && idx >= 0 {
                 Ok(*(x.swap_remove(idx as usize)))
             } else {
-                Err(format!("Index out of bounds error {:?} has no index {:?}", x, idx))
+                Err(format!(
+                    "Index out of bounds error {:?} has no index {:?}", x, idx))
             }
         },
-        (Values::List(x), Values::Range(min, max)) => {
+        (Values::Array(x), Values::Range(min, max)) => {
             if let (Values::Int(min), Values::Int(max)) = (*min, *max) {
                 if min <= max && min > 0 && max < x.len() as i32 {
-                    return Ok(Values::List(x.get(min as usize..max as usize).unwrap().to_vec()));
+                    return Ok(
+                        Values::Array(
+                            x.get(min as usize..max as usize).unwrap().to_vec()
+                        )
+                    );
                 }
             }
             Err("Invalid range for indexer".to_owned())
@@ -184,8 +202,8 @@ fn perform_eq_test(left: Values, op: &Op, right: Values) -> Result<Values, Strin
         (Values::Bool(x), Op::Eq, Values::Bool(y)) => Ok(Values::Bool(x == y)),
         (Values::Str(x), Op::Eq, Values::Str(y)) => Ok(Values::Bool(x.eq(&y))),
         (Values::Str(x), Op::Neq, Values::Str(y)) => Ok(Values::Bool(!x.eq(&y))),
-        (Values::List(x), Op::Eq, Values::List(y)) => Ok(Values::Bool(x == y)),
-        (Values::List(x), Op::Neq, Values::List(y)) => Ok(Values::Bool(x != y)),
+        (Values::Array(x), Op::Eq, Values::Array(y)) => Ok(Values::Bool(x == y)),
+        (Values::Array(x), Op::Neq, Values::Array(y)) => Ok(Values::Bool(x != y)),
         (Values::Unit, Op::Eq, Values::Unit) => Ok(Values::Bool(true)),
         (_, Op::Eq, _) => Ok(Values::Bool(false)),
         (x, Op::Neq, y) if x != y => Ok(Values::Bool(true)),
@@ -234,7 +252,7 @@ fn eval_if(guard: &Ast, body: &Ast, other: &Option<Box<Ast>>,
 }
 
 /// Converts a value `b` into the closest boole equivalent
-/// Non-empty strings and lists, true booleans, non zero ints and floats 
+/// Non-empty strings and arrays, true booleans, non zero ints and floats 
 /// and ranges with different first and second elements
 /// become true
 /// Everything else becomes false
@@ -244,7 +262,7 @@ fn to_booly(b: Result<Values, String>) -> Result<bool, String> {
         Ok(Values::Int(x)) if x != 0 => Ok(true),
         Ok(Values::Str(x)) if !x.is_empty() => Ok(true),
         Ok(Values::Float(x)) if x.abs() > 0.0001 => Ok(true),
-        Ok(Values::List(x)) if !x.is_empty() => Ok(true),
+        Ok(Values::Array(x)) if !x.is_empty() => Ok(true),
         Ok(Values::Range(a, b)) if a != b => Ok(true),
         Ok(_) => Ok(false),
         Err(e) => Err(e),
@@ -268,14 +286,27 @@ fn eval_seq(children: &Vec<Box<Ast>>, scope: &mut impl Environment)
 
 /// Evaluates a let definition by adding `name` to `scope`
 /// Returns unit on success
-fn eval_let(name: &String, ast: &Ast, scope: &mut impl Environment) 
+fn eval_let(names: &Vec<String>, ast: &Ast, scope: &mut impl Environment) 
     -> Result<Values, String> 
 {
     match eval(ast, scope) {
-        Ok(val) => {
-            scope.add(name.to_string(), val, false);
+        Ok(val) if names.len() == 1 => {
+            let nm = names.get(0).unwrap();
+            scope.add(nm.to_string(), val, false);
             Ok(Values::Unit)
         },
+        Ok(Values::Range(a, b)) if names.len() == 2 => {
+            scope.add(names.get(0).unwrap().to_string(), *a, false);
+            scope.add(names.get(1).unwrap().to_string(), *b, false);
+            Ok(Values::Unit)
+        },
+        Ok(Values::Tuple(es)) if names.len() == es.len() => {
+            for (nm, v) in names.iter().zip(es.into_iter()) {
+                scope.add(nm.to_string(), *v, false);
+            }
+            Ok(Values::Unit)
+        },
+        Ok(_) => Err("Invalid structured binding in let definition".to_owned()),
         err => err,
     }
 }
@@ -291,6 +322,20 @@ fn eval_func(name: &String, params: &Vec<String>, ast: &Ast, scope: &mut impl En
         Values::Func(params.clone(), ast.clone(), nw_scope.clone()), false);
     capture_into_scope(ast, &mut nw_scope.borrow_mut(), scope);
     Ok(Values::Unit)
+}
+
+/// Evaluates a lambda expression
+/// Captures names references in `ast` that are also in `scope` by copying them into a new
+/// environment
+/// Copies "this" into the new environment to allow recursion
+fn eval_lambda(params: &Vec<String>, ast: &Ast, scope: &mut impl Environment) 
+    -> Result<Values, String>
+{
+    let nw_scope = Rc::new(RefCell::new(Scope::new()));
+    nw_scope.borrow_mut().add("this".to_owned(), 
+        Values::Func(params.clone(), ast.clone(), nw_scope.clone()), false);
+    capture_into_scope(ast, &mut nw_scope.borrow_mut(), scope);
+    Ok(Values::Func(params.clone(), ast.clone(), nw_scope))
 }
 
 /// Searches for names in `ast` and captures them by copying their corresponding value from
@@ -336,10 +381,10 @@ fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment
 
 /// Evaluates a function application
 /// Requires arguments are expressions that do no modify any values in the scope
-fn eval_fn_app(name: &String, args: &Vec<Box<Ast>>, scope: &mut impl Environment)
+fn eval_fn_app(func: &Values, args: &Vec<Box<Ast>>, scope: &mut impl Environment)
     -> Result<Values, String>
 {
-    if let Ok(f @ Values::Func(..)) = scope.find(name) {
+    if let f @ Values::Func(..) = func {
         let mut val_args = Vec::<Values>::new();
         let mut arg_scope = ImmuScope::from(scope);
         for expr in args {
@@ -402,8 +447,8 @@ fn apply_function(func: &Values, mut args: Vec<Values>, allow_incomplete: bool)
     }
 }
 
-/// Evaluates a list of asts into a list of values
-fn eval_lst(elems: &Vec<Box<Ast>>, scope: &mut impl Environment) -> Result<Values, String> {
+/// Evaluates an array of asts into an array of values
+fn eval_arr(elems: &Vec<Box<Ast>>, scope: &mut impl Environment, tuple: bool) -> Result<Values, String> {
     let mut lst = Vec::<Box<Values>>::new();
     for expr in elems {
         match eval(expr, scope) {
@@ -411,5 +456,22 @@ fn eval_lst(elems: &Vec<Box<Ast>>, scope: &mut impl Environment) -> Result<Value
             e => return e,
         }
     }
-    Ok(Values::List(lst))
+    if tuple {
+        Ok(Values::Tuple(lst))
+    }
+    else {
+        Ok(Values::Array(lst))
+    }
+}
+
+/// Evaluates a map
+fn eval_map(es: &HashMap<String, Box<Ast>>, scope: &mut impl Environment) -> Result<Values, String> {
+    let mut map = HashMap::<String, Box<Values>>::new();
+    for (k, v) in es {
+        match eval(v, scope) {
+            Ok(val) => map.insert(k.clone(), Box::new(val)),
+            e => return e,
+        };
+    }
+    Ok(Values::Map(map))
 }
