@@ -193,6 +193,7 @@ fn parse_bop_right(stream: &mut VecDeque<Tokens>, cur_pres: i32) -> Result<Ast, 
 /// Larger number indicates higher priority
 fn precedence(op: Op) -> i32 {
     match op {
+        Op::Dot => 12,
         Op::Index | Op::Neg | Op::AsBool => 11,
         Op::Exp => 10,
         Op::Mult | Op::Mod | Op::Div | Op::And => 9,
@@ -200,9 +201,8 @@ fn precedence(op: Op) -> i32 {
         Op::Eq | Op::Neq | Op::Leq | Op::Geq | Op::Lt | Op::Gt => 7,
         Op::Land => 6,
         Op::Lor => 5,
-        Op::Dot => 4,
-        Op::Pipeline => 3,
-        Op::Range => 2,
+        Op::Pipeline => 4,
+        Op::Range => 3,
     }
 }
 
@@ -248,11 +248,7 @@ fn parse_expr(stream: &mut VecDeque<Tokens>, parent_precedence: Option<i32>) -> 
                 Ok(ast) => parse_bop(ast, parent_precedence, stream),
                 e => e,
             }
-        Some(_) =>
-        //if *x == Tokens::RParen =>
-            left,
-        None => left,
-        //x => Err(format!("Unknown token {:?} in expr with left as {:?}", x, left)),
+        _ => left,
     }
 }
 
@@ -585,8 +581,9 @@ fn parse_map(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
                 };
                 if Some(&Tokens::Comma) != stream.front() { break; }
                 else { consume(stream); }
-        } _ =>
-            return Err("Map missing named identifier".to_owned()),
+            },
+            Some(Tokens::RBrace) => return Ok(Ast::Map(map)),
+            x => return Err(format!("Unexpected token {:?} when parsing map", x)),
         }
     }
     if Some(Tokens::RBrace) != stream.pop_front() {

@@ -636,26 +636,26 @@ mod tests {
         map.speak(map.name, map.aliases, map.age)
         "#, Values::Str("Hello, my name is Jill, but you can call me J or Jillian. I am 20 years old.".to_owned()));
 
-        r#"
-        interface Being {
-            def name;
-            fun speak();
-        }
-        class Person impl Being {
-            def name, age;
-            pub name;
+        assert_val_eq(r#"
+        let map = {
+            'str key': 20
+        };
+        map['str key']
+        "#, Values::Int(20));
 
-            fun ctor name {
-                self.name = name;
-                self.age = 0;
-            }
+        assert_val_eq(r#"
+        let map = {};
+        let map = map.insert('name', 'Alex').insert(('age', 19));
+        map.name + " " + map['age']
+        "#, Values::Str("Alex 19".to_owned()));
 
-            fun speak {
-
-            }
-        }
-
-        let p = Person('John')
-        "#
+        assert_val_eq(r#"
+        let map = {address: '333 East Valley Road'};
+        let map = map.insert('name', 'Alex').insert(('age', 19));
+        if map.contains('address', 'name'):
+            map.contains('age', 'ssn')
+        else
+            map
+        "#, Values::Bool(false));
     }
 }

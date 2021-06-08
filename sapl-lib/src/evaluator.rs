@@ -116,11 +116,61 @@ fn perform_dot_op(left: Values, right: &Ast, scope: &mut impl Environment) -> Re
         (Values::Range(_, snd),
             Ast::FnApply(name, vec)) if name.eq("snd") && vec.is_empty() =>
                 Ok(*snd),
+        (Values::Map(map), Ast::FnApply(fn_name, args)) if fn_name.eq("insert") =>
+            map_insert(map, args, scope),
+        (Values::Map(map), Ast::FnApply(fn_name, args)) if fn_name.eq("contains") && !args.is_empty() => {
+            for e in args {
+                match eval(&*e, scope) {
+                    Ok(Values::Str(name)) => if map.get(&name) == None {
+                        return Ok(Values::Bool(false));
+                    },
+                    Ok(_) => return Err("Map contains(): non string key".to_owned()),
+                    e => return e,
+                }
+            };
+            Ok(Values::Bool(true))
+        },
         (Values::Map(map), Ast::Name(nm)) if map.contains_key(nm) =>
             Ok((**(map.get(nm).unwrap())).clone()),
         (Values::Map(map), Ast::FnApply(fn_name, args)) if map.contains_key(fn_name) =>
             eval_fn_app(map.get(fn_name).unwrap(), args, scope),
-        _ => Err("unrecognized member".to_owned())
+        (l, r) => Err(format!("Unrecognized member {:?} in {:?}", r, l)),
+    }
+}
+
+/// Inserts a key-value pair into a map
+/// Accepts string key and value arguments or a 2-tuple string, value
+fn map_insert(mut map: HashMap<String, Box<Values>>, args: &Vec<Box<Ast>>, 
+    scope: &mut impl Environment) 
+    -> Result<Values, String> 
+{
+    if args.len() == 1 {
+        if let Ok(Values::Tuple(mut x)) = eval(&*args[0], scope) {
+            if x.len() == 2 {
+                match (*x.swap_remove(0), *x.pop().unwrap()) {
+                    (Values::Str(name), x) => {
+                        map.insert(name, Box::new(x));
+                        Ok(Values::Map(map))
+                    },
+                    _ => Err("Map key must be a string".to_owned()),
+                }
+            } else {
+                Err("Invalid tuple for map insert".to_owned())
+            }
+        } else {
+            Err("Invalid tuple for map insert".to_owned())
+        }
+    } else if args.len() == 2 {
+        match (eval(&*args[0], scope), eval(&*args[1], scope)) {
+            (Ok(Values::Str(x)), Ok(y)) => {
+                map.insert(x, Box::new(y));
+                Ok(Values::Map(map))
+            },
+            (Ok(_), Ok(_)) => Err("Map key must be a string".to_owned()),
+            (Err(e), _) | (_, Err(e)) => Err(e),
+        }
+    } else {
+        Err("Invalid arguments for map insert".to_owned())
     }
 }
 
@@ -146,7 +196,13 @@ fn perform_index_op(left: Values, right: Values) -> Result<Values, String> {
                 }
             }
             Err("Invalid range for indexer".to_owned())
-        }
+        },
+        (Values::Map(x), Values::Str(name)) => {
+            match x.get(&name) {
+                Some(member) => Ok(*member.clone()),
+                _ => Err(format!("Map has no member {}", name)),
+            }
+        },
         _ => Err(format!("Unrecognized indexer")),
     }
 }
