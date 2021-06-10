@@ -10,6 +10,7 @@ pub enum Op {
     Pipeline, Dot, Neg,
     AsBool,
     Index,
+    Return,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -203,6 +204,7 @@ fn precedence(op: Op) -> i32 {
         Op::Lor => 5,
         Op::Pipeline => 4,
         Op::Range => 3,
+        Op::Return => 2,
     }
 }
 
@@ -228,6 +230,7 @@ fn tok_to_op(tok: &Tokens) -> Option<Op> {
         Tokens::OpDot => Some(Op::Dot),
         Tokens::OpNegate => Some(Op::Neg),
         Tokens::OpRange => Some(Op::Range),
+        Tokens::Return => Some(Op::Return),
         _ => None,
     }
 }
@@ -510,7 +513,7 @@ fn tok_is_post_uop(tok: &Tokens) -> bool {
 /// Ie. the negation operator `~val`
 fn tok_is_pre_uop(tok: &Tokens) -> bool {
     match *tok {
-        Tokens::OpNegate => true,
+        Tokens::OpNegate | Tokens::Return => true,
         _ => false,
     }
 }
@@ -535,6 +538,7 @@ fn parse_pre_uop(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
     let right = 
     match stream.front() {
         Some(Tokens::LParen) | Some(Tokens::Name(_)) => parse_expr(stream, None),
+        Some(x) if tok_is_pre_uop(x) => parse_expr(stream, None),
         Some(x) if tok_is_val(x) => parse_expr(stream, None),
         x => return Err(format!("Unexpected {:?} after Uop", x)),
     };

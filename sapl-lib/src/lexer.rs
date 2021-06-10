@@ -18,6 +18,7 @@ pub enum Tokens {
     Name(String),
     Seq, Let,
     Fun, Comma,
+    Return,
 }
 
 /// Converts an input stream into a deque of tokens
@@ -367,6 +368,7 @@ impl TokenizerFSM {
             "else" => Some(Tokens::Else),
             "let" => Some(Tokens::Let),
             "fun" => Some(Tokens::Fun),
+            "return" => Some(Tokens::Return),
             x => Some(Tokens::Name(x.to_owned())),
         }
     }

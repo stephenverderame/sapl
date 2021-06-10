@@ -3,17 +3,18 @@ mod parser;
 mod evaluator;
 
 pub use evaluator::Values;
+pub use evaluator::Res;
 use std::io::Read;
 
 /// Parses sapl code from an input stream
 /// The input stream must contain only sapl code
-pub fn parse_sapl(input: impl Read) -> Result<Values, String> {
+pub fn parse_sapl(input: impl Read) -> Res {
     let mut tokens = lexer::tokenize(input);
     let ast = parser::parse(&mut tokens);
     if let Ok(ast) = ast {
         evaluator::evaluate(&ast)
     } else {
-        Err(ast.unwrap_err())
+        Res::Bad(ast.unwrap_err())
     }
 }
 
@@ -26,6 +27,7 @@ mod tests {
     use crate::parser::Ast;
     use crate::parser::Op;
     use crate::evaluator::Values;
+    use crate::evaluator::Res;
     use std::collections::VecDeque;
     use std::collections::HashMap;
 
@@ -44,10 +46,13 @@ mod tests {
     }
 
     fn assert_val_eq(code: &str, val: Values) {
+        assert_eval_eq(code, Res::Vl(val))
+    }
+
+    fn assert_eval_eq(code: &str, res: Res) {
         let mut ts = lexer::tokenize(code.as_bytes());
         let ast = parser::parse(&mut ts).unwrap();
-        assert_eq!(evaluator::evaluate(&ast).unwrap(), val);
-
+        assert_eq!(evaluator::evaluate(&ast), res);
     }
 
     #[test]
@@ -657,5 +662,18 @@ mod tests {
         else
             map
         "#, Values::Bool(false));
+    }
+
+    #[test]
+    fn return_test() {
+        assert_val_eq(r#"
+        fun test_fun x {
+            if x == 10 { return x };
+            x * x
+        }
+
+        test_fun(10) + test_fun(8)
+        "#
+        , Values::Int(74))
     }
 }
