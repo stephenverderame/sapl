@@ -25,13 +25,17 @@ pub enum Values {
 #[derive(PartialEq, Debug, Clone)]
 pub enum Res {
     Vl(Values),
-    Exn(String),
+    Exn(Values),
     Bad(String),
     Ret(Values),
 }
 
 use Res::Vl;
 use Res::Bad;
+
+fn str_exn(msg: &str) -> Res {
+    Res::Exn(Values::Str(msg.to_owned()))
+}
 
 
 /// Evaluates a SAPL AST
@@ -84,6 +88,7 @@ fn eval_bop(left: &Ast, op: &Op, right: &Ast, scope: &mut impl Environment) -> R
                     perform_eq_test(val, op, right),
                 (Vl(right), Op::Index) => perform_index_op(val, right),
                 (Vl(right), Op::Range) => Vl(Values::Range(Box::new(val), Box::new(right))),
+                (Vl(right), Op::Concat) => perform_concat(val, right),
                 (Vl(right), op) => perform_bop(val, op, right),
                 (e, _) => e,
             }
@@ -97,13 +102,14 @@ fn eval_uop(left: &Ast, op: &Op, scope: &mut impl Environment) -> Res {
         (Vl(Values::Bool(x)), Op::Neg) => Vl(Values::Bool(!x)),
         (Vl(Values::Int(x)), Op::Neg) => Vl(Values::Int(-x)),
         (Vl(Values::Float(x)), Op::Neg) => Vl(Values::Float(-x)),
-        (Vl(v), Op::Neg) => Bad(format!("{:?} cannot be negated", v)),
+        (Vl(v), Op::Neg) => str_exn(&format!("{:?} cannot be negated", v)[..]),
         (v, Op::AsBool) => match to_booly(v) {
             Ok(b) => Vl(Values::Bool(b)),
             Err(e) => Bad(e),
         },
         (Vl(v), Op::Return) => Res::Ret(v),
-        (Vl(_), x) => Bad(format!("{:?} is not a Uop", x)),
+        (Vl(v), Op::Throw) => Res::Exn(v),
+        (Vl(_), x) => str_exn(&format!("{:?} is not a Uop", x)[..]),
         (e, _) => e,
     }
 }
@@ -136,7 +142,6 @@ fn do_dot_ref_op(left: &Values, right: &Ast, scope: &mut impl Environment)
                 map_contains_all(map, args, scope),
         (Values::Map(map), Ast::Name(nm)) if map.contains_key(nm) =>
             Vl((**(map.get(nm).unwrap())).clone()),
-
         (Values::Range(fst, _),
             Ast::FnApply(name, vec)) if name.eq("fst") && vec.is_empty() =>
                 Vl(*fst.clone()),
@@ -145,23 +150,13 @@ fn do_dot_ref_op(left: &Values, right: &Ast, scope: &mut impl Environment)
                 Vl(*snd.clone()),
         (Values::Map(map), Ast::FnApply(fn_name, args)) if map.contains_key(fn_name) =>
             eval_fn_app(map.get(fn_name).unwrap(), args, scope),
-        (Values::Array(x),
-            Ast::FnApply(name, elems)) if name.eq("push_back") =>
-                array_push_back(x.clone(), elems, scope),
-        (Values::Map(map), Ast::FnApply(fn_name, args)) if fn_name.eq("insert") =>
-            map_insert(map.clone(), args, scope),
-        (l, r) => Bad(format!("Unrecognized member {:?} in {:?}", r, l)),
+        (l, r) => str_exn(&format!("Unrecognized member {:?} in {:?}", r, l)[..]),
     }
 }
 
 /// Performs a dot operation on a moveable value
 fn do_dot_mv_op(left: Values, right: &Ast, scope: &mut impl Environment) -> Res {
     match (left, right) {
-        (Values::Array(x),
-            Ast::FnApply(name, elems)) if name.eq("push_back") =>
-                array_push_back(x, elems, scope),
-        (Values::Map(map), Ast::FnApply(fn_name, args)) if fn_name.eq("insert") =>
-            map_insert(map, args, scope),
         (Values::Range(fst, _),
             Ast::FnApply(name, vec)) if name.eq("fst") && vec.is_empty() =>
                 Vl(*fst),
@@ -172,17 +167,47 @@ fn do_dot_mv_op(left: Values, right: &Ast, scope: &mut impl Environment) -> Res 
     }
 }
 
-/// Pushes each evaluated value in `args` onto `arr`
-fn array_push_back(mut arr: Vec<Box<Values>>, args: &Vec<Box<Ast>>,
-    scope: &mut impl Environment) -> Res 
-{
-    for e in args {
-        match eval(&*e, scope) {
-            Vl(val) => arr.push(Box::new(val)),
-            e => return e,
-        }
+fn perform_concat(left: Values, right: Values) -> Res {
+    match (left, right) {
+        (Values::Array(mut x), y) => {
+            x.push(Box::new(y));
+            Vl(Values::Array(x))
+        },
+        (Values::Map(mut x), Values::Tuple(mut y)) if y.len() == 2 => {
+            if let (Values::Str(key), val) = (*y.swap_remove(0), y.pop().unwrap()) {
+                x.insert(key, val);
+                Vl(Values::Map(x))
+            } else {
+                str_exn("Can only concatenate maps with tuples")
+            }
+        },
+        (Values::Map(mut x), Values::Array(y)) => {
+            for elem in y.into_iter() {
+                if let Values::Tuple(mut pair) = *elem {
+                    if pair.len() == 2 {
+                        if let (Values::Str(key), val) = (*pair.swap_remove(0), pair.pop().unwrap()) {
+                            x.insert(key, val);
+                        } else {
+                            return str_exn("Can only concatenate maps with list of k/v pairs");
+                        }
+                    } else {
+                        return str_exn("Assoc list to concat with map must contain 2 tuples");
+                    }
+                } else {
+                    return str_exn("Must concatenate map with a list of k/v pairs");
+                }
+            };
+            Vl(Values::Map(x))
+        },
+        (Values::Map(mut x), Values::Map(y)) => {
+            for val in y.into_iter() {
+                let (k, v) = val;
+                x.insert(k, v);
+            };
+            Vl(Values::Map(x))
+        },
+        (l, r) => str_exn(&format!("Invalid concatenation of {:?} onto {:?}", r, l)[..]),
     }
-    Vl(Values::Array(arr))
 }
 
 /// Returns a boolean value if `map` contains all values in `args` once
@@ -195,48 +220,11 @@ fn map_contains_all(map: &HashMap<String, Box<Values>>, args: &Vec<Box<Ast>>,
             Vl(Values::Str(name)) => if map.get(&name) == None {
                 return Vl(Values::Bool(false));
             },
-            Vl(_) => return Bad("Map contains(): non string key".to_owned()),
+            Vl(_) => return Res::Exn(Values::Str("Map contains(): non string key".to_owned())),
             e => return e,
         }
     };
     Vl(Values::Bool(true))
-}
-
-/// Inserts a key-value pair into a map
-/// Accepts string key and value arguments or a 2-tuple string, value
-fn map_insert(mut map: HashMap<String, Box<Values>>, args: &Vec<Box<Ast>>, 
-    scope: &mut impl Environment) 
-    -> Res 
-{
-    if args.len() == 1 {
-        if let Vl(Values::Tuple(mut x)) = eval(&*args[0], scope) {
-            if x.len() == 2 {
-                match (*x.swap_remove(0), *x.pop().unwrap()) {
-                    (Values::Str(name), x) => {
-                        map.insert(name, Box::new(x));
-                        Vl(Values::Map(map))
-                    },
-                    _ => Bad("Map key must be a string".to_owned()),
-                }
-            } else {
-                Bad("Invalid tuple for map insert".to_owned())
-            }
-        } else {
-            Bad("Invalid tuple for map insert".to_owned())
-        }
-    } else if args.len() == 2 {
-        match (eval(&*args[0], scope), eval(&*args[1], scope)) {
-            (Vl(Values::Str(x)), Vl(y)) => {
-                map.insert(x, Box::new(y));
-                Vl(Values::Map(map))
-            },
-            (Vl(_), Vl(_)) => Bad("Map key must be a string".to_owned()),
-            (e, Vl(_)) | (Vl(_), e) 
-            | (e, _) => e,
-        }
-    } else {
-        Bad("Invalid arguments for map insert".to_owned())
-    }
 }
 
 /// Indexes `right` from `left`
@@ -246,8 +234,8 @@ fn perform_index_op(left: Values, right: Values) -> Res {
             if idx < x.len() as i32 && idx >= 0 {
                 Vl(*(x.swap_remove(idx as usize)))
             } else {
-                Bad(format!(
-                    "Index out of bounds error {:?} has no index {:?}", x, idx))
+                Res::Exn(Values::Str(format!(
+                    "Index out of bounds error {:?} has no index {:?}", x, idx)))
             }
         },
         (Values::Array(x), Values::Range(min, max)) => {
@@ -260,15 +248,15 @@ fn perform_index_op(left: Values, right: Values) -> Res {
                     );
                 }
             }
-            Bad("Invalid range for indexer".to_owned())
+            Res::Exn(Values::Str("Invalid range for indexer".to_owned()))
         },
         (Values::Map(x), Values::Str(name)) => {
             match x.get(&name) {
                 Some(member) => Vl(*member.clone()),
-                _ => Bad(format!("Map has no member {}", name)),
+                _ => Res::Exn(Values::Str(format!("Map has no member {}", name))),
             }
         },
-        _ => Bad(format!("Unrecognized indexer")),
+        _ => str_exn("Unrecognized indexer"),
     }
 }
 
@@ -280,6 +268,10 @@ fn perform_bop(vleft: Values, op: &Op, vright: Values) -> Res {
         (Values::Int(x), Op::Plus, Values::Int(y)) => Vl(Values::Int(x + y)),
         (Values::Int(x), Op::Sub, Values::Int(y)) => Vl(Values::Int(x - y)),
         (Values::Int(x), Op::Mult, Values::Int(y)) => Vl(Values::Int(x * y)),
+        (_, Op::Div, Values::Int(y)) if y == 0 => 
+            Res::Exn(Values::Str("Divide by zero exception".to_owned())),
+        (_, Op::Div, Values::Float(y)) if y == 0.0 => 
+            Res::Exn(Values::Str("Divide by zero exception".to_owned())),
         (Values::Int(x), Op::Div, Values::Int(y)) => Vl(Values::Int(x / y)),
         (Values::Int(x), Op::Exp, Values::Int(y)) if y >= 0 => 
             Vl(Values::Int(i32::pow(x, y as u32))),
@@ -310,9 +302,18 @@ fn perform_bop(vleft: Values, op: &Op, vright: Values) -> Res {
 
         (Values::Bool(x), Op::Lor, Values::Bool(y)) => Vl(Values::Bool(x || y)),
         (Values::Bool(x), Op::Land, Values::Bool(y)) => Vl(Values::Bool(x && y)),
+
         (val, Op::Pipeline, f) => eval_pipeline(val, f),
+
+        (Values::Array(mut x), Op::Plus, Values::Array(y)) => {
+            for val in y.into_iter() {
+                x.push(val)
+            };
+            Vl(Values::Array(x))
+        },
         (x, op, y) => 
-            Bad(format!("'{:?} {:?} {:?}' is an invalid Bop or invalid arguments", x, op, y))
+            Res::Exn(Values::Str(
+                format!("'{:?} {:?} {:?}' is an invalid Bop or invalid arguments", x, op, y)))
     }
 }
 
@@ -386,8 +387,8 @@ fn to_booly(b: Res) -> Result<bool, String> {
         Vl(Values::Array(x)) if !x.is_empty() => Ok(true),
         Vl(Values::Range(a, b)) if a != b => Ok(true),
         Vl(_) => Ok(false),
-        Bad(e) | Res::Exn(e) => Err(e),
-        Res::Ret(_) => Err("Return value cannot be converted to bool".to_owned()),
+        Bad(e) => Err(e),
+       _ => Err("Return/exn value cannot be converted to bool".to_owned()),
     }
 }
 
@@ -399,8 +400,8 @@ fn eval_seq(children: &Vec<Box<Ast>>, scope: &mut impl Environment)
         Bad("No children in sequence".to_owned());
     for subtree in children {
         match eval(&*subtree, scope) {
-            er @ Bad(_) => return er,
-            x => last_res = x,
+            x @ Vl(_) => last_res = x,
+            x => return x,
         }
     }
     last_res
@@ -517,7 +518,7 @@ fn eval_fn_app(func: &Values, args: &Vec<Box<Ast>>, scope: &mut impl Environment
         }
         apply_function(f, val_args, false)
     } else {
-        Bad("Variable is not a function".to_owned())
+        str_exn("Variable is not a function")
     }
 
 }
@@ -563,12 +564,12 @@ fn apply_function(func: &Values, mut args: Vec<Values>, allow_incomplete: bool)
                 Rc::new(RefCell::new(sc.cpy()))))
         } else {
             match eval(ast, &mut sc) {
-                Vl(v) | Res::Ret(v) => Vl(v),
+                Res::Ret(v) => Vl(v),
                 e => e,
             }
         }
     } else {
-        Bad("Not a function being applied".to_owned())
+        str_exn("Not a function being applied")
     }
 }
 

@@ -523,7 +523,7 @@ mod tests {
 
         assert_val_eq(r#"
         let lst = ["hello", 100, false, 'goodbye', 8.70];
-        lst.push_back(100, 50, 80, 90).size()
+        (lst @ 100 @ 50 @ 80 @ 90).size()
         "#, Values::Int(9));
 
         assert_val_eq(r#"
@@ -547,7 +547,7 @@ mod tests {
 
         assert_val_eq(r#"
         let names = ['Diana', 'Lexi', 'Brady', 'Andrew', 'Martin'];
-        let names = names.push_back('Angelina', 'Garcia');
+        let names = names + ['Angelina', 'Garcia'];
         names[2..6] == ['Brady', 'Andrew', 'Martin', 'Angelina']
         "#, Values::Bool(true));
     }
@@ -650,22 +650,32 @@ mod tests {
 
         assert_val_eq(r#"
         let map = {};
-        let map = map.insert('name', 'Alex').insert(('age', 19));
+        let map = map @ ('name', 'Alex') @ ('age', 19);
         map.name + " " + map['age']
         "#, Values::Str("Alex 19".to_owned()));
 
         assert_val_eq(r#"
         let map = {address: '333 East Valley Road'};
-        let map = map.insert('name', 'Alex').insert(('age', 19));
+        let map = map @ [('name', 'Alex'), ('age', 19)];
         if map.contains('address', 'name'):
             map.contains('age', 'ssn')
         else
             map
         "#, Values::Bool(false));
+
+        assert_val_eq(r#"
+        let map = {address: '333 East Valley Road'};
+        let map = map @ { house_color: 'red', car: 'volvo' };
+        map.house_color
+        "#, Values::Str("red".to_owned()));
     }
 
     #[test]
     fn return_test() {
+        assert_parse_str_eq("if x == 10: return x", 
+            Ast::If(Box::new(Ast::Bop(Box::new(Ast::Name("x".to_owned())), Op::Eq, Box::new(Ast::VInt(10)))),
+                Box::new(Ast::Uop(Box::new(Ast::Name("x".to_owned())), Op::Return)), None));
+
         assert_val_eq(r#"
         fun test_fun x {
             if x == 10 { return x };

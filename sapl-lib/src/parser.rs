@@ -7,10 +7,10 @@ pub enum Op {
     Plus, Mult, Div, Mod, Sub, Exp,
     Land, Lor, And, Or, Lt, Gt, Eq,
     Neq, Leq, Geq, Range,
-    Pipeline, Dot, Neg,
+    Pipeline, Dot, Neg, Concat,
     AsBool,
     Index,
-    Return,
+    Return, Throw,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -32,6 +32,7 @@ pub enum Ast {
     Placeholder,
     Uop(Box<Ast>, Op),
     Map(HashMap<String, Box<Ast>>),
+    Try(Box<Ast>, String, Box<Ast>),
 }
 
 /// Parses a stream of tokens `stream` into an Abstract Syntax Tree
@@ -87,14 +88,15 @@ fn can_elide_seq(ast: &Ast) -> bool {
 
 /// True if `tok` can start an expression
 fn tok_is_expr(tok: &Tokens) -> bool {
-    match *tok {
+    match tok {
         Tokens::Integer(_) | Tokens::Float(_)
         | Tokens::Bool(_) | Tokens::TString(_)
         | Tokens::LParen | Tokens::If 
         | Tokens::Name(_) | Tokens::OpQ 
         | Tokens::LBracket | Tokens::OpNegate 
-        | Tokens::LBrace =>
+        | Tokens::LBrace | Tokens::Try =>
         true,
+        x if tok_is_pre_uop(x) => true,
         _ => false,
     }
 }
@@ -116,7 +118,7 @@ fn tok_is_bop(tok: &Tokens) -> bool {
         | Tokens::OpLeq | Tokens::OpEq | Tokens::OpLt 
         | Tokens::OpNeq | Tokens::OpGeq | Tokens::OpGt
         | Tokens::OpPipeline | Tokens::OpDot 
-        | Tokens::OpRange
+        | Tokens::OpRange | Tokens::OpConcat
         => true,
         _ => false,
     }
@@ -203,8 +205,8 @@ fn precedence(op: Op) -> i32 {
         Op::Land => 6,
         Op::Lor => 5,
         Op::Pipeline => 4,
-        Op::Range => 3,
-        Op::Return => 2,
+        Op::Range | Op::Concat => 3,
+        Op::Return | Op::Throw => 2,
     }
 }
 
@@ -231,6 +233,8 @@ fn tok_to_op(tok: &Tokens) -> Option<Op> {
         Tokens::OpNegate => Some(Op::Neg),
         Tokens::OpRange => Some(Op::Range),
         Tokens::Return => Some(Op::Return),
+        Tokens::OpConcat => Some(Op::Concat),
+        Tokens::Throw => Some(Op::Throw),
         _ => None,
     }
 }
@@ -270,6 +274,7 @@ fn parse_expr_left(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
         Some(Tokens::LBracket) => parse_array(consume(stream)),
         Some(Tokens::LBrace) => parse_map(consume(stream)),
         Some(Tokens::Fun) => parse_func(consume(stream)),
+        Some(Tokens::Try) => parse_try(consume(stream)),
         Some(tok) if tok_is_pre_uop(tok) => parse_pre_uop(stream),
         Some(tok) if tok_is_val(tok) => tok_to_val(stream.pop_front().unwrap()),
         t => Err(format!("Unexpected {:?} in expr left branch", t)),
@@ -288,6 +293,27 @@ fn parse_paren_expr(stream: &mut VecDeque<Tokens>) -> Result<Ast, String>
             _ => Err("Missing closing parenthesis".to_owned()),
         }
     } else {expr}
+}
+
+fn parse_try(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
+    let is_brace = stream.front() == &Tokens::LBrace;
+    if stream.pop_front() == Tokens::Comma || is_brace {
+        let body = match parse(stream) {
+            Ok(ast) => ast,
+            e => return e,
+        };
+        if is_brace && stream.pop_front() != Tokens::RBrace { 
+            return Err("Missing brace in try".to_owned());
+        }
+        if stream.pop_front() != Tokens::Catch { 
+            return Err("Missing catch block".to_owned());
+        }
+        if let Tokens::Name(x) = stream.pop_front() {
+
+        } else {
+            return Err("Missing catch variable".to_owned());
+        }
+    }
 }
 
 fn parse_tuple(first: Ast, stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
@@ -513,7 +539,8 @@ fn tok_is_post_uop(tok: &Tokens) -> bool {
 /// Ie. the negation operator `~val`
 fn tok_is_pre_uop(tok: &Tokens) -> bool {
     match *tok {
-        Tokens::OpNegate | Tokens::Return => true,
+        Tokens::OpNegate | Tokens::Return 
+        | Tokens::Throw => true,
         _ => false,
     }
 }

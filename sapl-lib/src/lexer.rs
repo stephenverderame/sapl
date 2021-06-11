@@ -10,7 +10,7 @@ pub enum Tokens {
     OpPlus, OpMinus, OpMult, OpDiv, OpMod, OpExp,
     OpLor, OpLand, OpOr, OpAnd, OpEq, OpLt, OpGt, 
     OpLeq, OpGeq, OpNeq, OpAssign, OpQ, OpDot,
-    OpNegate, OpRange,
+    OpNegate, OpRange, OpConcat,
     LParen, RParen, LBrace, RBrace, Colon,
     LBracket, RBracket,
     OpPipeline,
@@ -18,7 +18,7 @@ pub enum Tokens {
     Name(String),
     Seq, Let,
     Fun, Comma,
-    Return,
+    Return, Throw, Try, Catch,
 }
 
 /// Converts an input stream into a deque of tokens
@@ -337,6 +337,7 @@ impl TokenizerFSM {
             "." => Some(Tokens::OpDot),
             "!" => Some(Tokens::OpNegate),
             ".." => Some(Tokens::OpRange),
+            "@" => Some(Tokens::OpConcat),
             _ => panic!("'{}' is not a recognized operator", self.input),
         }
     }
@@ -369,6 +370,9 @@ impl TokenizerFSM {
             "let" => Some(Tokens::Let),
             "fun" => Some(Tokens::Fun),
             "return" => Some(Tokens::Return),
+            "throw" => Some(Tokens::Throw),
+            "try" => Some(Tokens::Try),
+            "catch" => Some(Tokens::Catch),
             x => Some(Tokens::Name(x.to_owned())),
         }
     }
