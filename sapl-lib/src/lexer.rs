@@ -14,12 +14,12 @@ pub enum Tokens {
     LParen, RParen, LBrace, RBrace, Colon,
     LBracket, RBracket,
     OpPipeline,
-    If, Else,
+    If, Else, For, In,
     Name(String),
     Seq, Let,
     Fun, Comma,
     Return, Throw, Try, Catch,
-    Rightarrow,
+    Rightarrow, Var, While,
 }
 
 /// Converts an input stream into a deque of tokens
@@ -375,6 +375,10 @@ impl TokenizerFSM {
             "throw" => Some(Tokens::Throw),
             "try" => Some(Tokens::Try),
             "catch" => Some(Tokens::Catch),
+            "for" => Some(Tokens::For),
+            "in" => Some(Tokens::In),
+            "var" => Some(Tokens::Var),
+            "while" => Some(Tokens::While),
             x => Some(Tokens::Name(x.to_owned())),
         }
     }

@@ -72,6 +72,8 @@ fn eval(ast: &Ast, scope: &mut impl Environment) -> Res {
         Ast::Tuple(elems) => eval_arr(elems, scope, true),
         Ast::Map(es) => eval_map(es, scope),
         Ast::Try(body, var, catch) => eval_try(&*body, &var[..], &*catch, scope),
+        Ast::For(vars, iter, if_expr, body) => eval_for(vars, &*iter, if_expr, &*body, scope),
+        Ast::While(guard, body) => eval_while(&*guard, &*body, scope),
         Ast::Placeholder => Vl(Values::Placeholder),
     }
 }
@@ -81,11 +83,13 @@ fn eval(ast: &Ast, scope: &mut impl Environment) -> Res {
 fn eval_bop(left: &Ast, op: &Op, right: &Ast, scope: &mut impl Environment) -> Res {
     if op == &Op::Dot {
         return perform_dot_op(left, right, scope);
+    } else if op == &Op::Assign {
+        return perform_assign_op(left, right, scope);
     }
     let left = eval(left, scope);
     match (left, op) {
-        (Vl(Values::Bool(true)), Op::Lor) => Vl(Values::Bool(true)),
-        (Vl(Values::Bool(false)), Op::Land) => Vl(Values::Bool(false)),
+        (x, Op::Lor) if to_booly(&x) == Ok(true) => Vl(Values::Bool(true)),
+        (x, Op::Land) if to_booly(&x) == Ok(false) => Vl(Values::Bool(false)),
         (Vl(val), op) => {
             match (eval(right, scope), op) {
                 (Vl(right), op @ Op::Eq) | (Vl(right), op @ Op::Neq) =>
@@ -101,15 +105,16 @@ fn eval_bop(left: &Ast, op: &Op, right: &Ast, scope: &mut impl Environment) -> R
     }
 }
 
+/// Evaluates the unary operator `op left`
 fn eval_uop(left: &Ast, op: &Op, scope: &mut impl Environment) -> Res {
     match (eval(left, scope), op) {
         (Vl(Values::Bool(x)), Op::Neg) => Vl(Values::Bool(!x)),
         (Vl(Values::Int(x)), Op::Neg) => Vl(Values::Int(-x)),
         (Vl(Values::Float(x)), Op::Neg) => Vl(Values::Float(-x)),
         (Vl(v), Op::Neg) => str_exn(&format!("{:?} cannot be negated", v)[..]),
-        (v, Op::AsBool) => match to_booly(v) {
-            Ok(b) => Vl(Values::Bool(b)),
-            Err(e) => Bad(e),
+        (v, Op::AsBool) => match v {
+            Vl(_) | Res::Ret(_) => Vl(Values::Bool(true)),
+            Res::Exn(_) | Bad(_) => Vl(Values::Bool(false)),
         },
         (Vl(v), Op::Return) => Res::Ret(v),
         (Vl(v), Op::Throw) => Res::Exn(v),
@@ -133,6 +138,23 @@ fn perform_dot_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> Res 
     }
 }
 
+fn perform_assign_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> Res {
+    let rt =
+    match eval(right, scope) {
+        Vl(v) => v,
+        e => return e,
+    };
+
+    if let Ast::Name(x) = left {
+        match scope.update(&x[..], rt) {
+            true => Vl(Values::Unit),
+            false => str_exn("Attempt to update a non-existant or immutable variable"),
+        }
+    } else {
+        str_exn("Unimplemented assignment")
+    }
+}
+
 /// Performs a dot operation on a value
 fn do_dot_ref_op(left: &Values, right: &Ast, scope: &mut impl Environment) 
     -> Res 
@@ -144,6 +166,9 @@ fn do_dot_ref_op(left: &Values, right: &Ast, scope: &mut impl Environment)
         (Values::Map(map), Ast::FnApply(fn_name, args)) 
             if fn_name.eq("contains") && !args.is_empty() =>
                 map_contains_all(map, args, scope),
+        (Values::Array(x), Ast::FnApply(fn_name, args)) 
+                if fn_name.eq("contains") && !args.is_empty() =>
+                    arr_contains_all(x, args, scope),
         (Values::Map(map), Ast::Name(nm)) if map.contains_key(nm) =>
             Vl((**(map.get(nm).unwrap())).clone()),
         (Values::Range(fst, _),
@@ -171,6 +196,7 @@ fn do_dot_mv_op(left: Values, right: &Ast, scope: &mut impl Environment) -> Res 
     }
 }
 
+/// Performs the concatenation operator `left @ right`
 fn perform_concat(left: Values, right: Values) -> Res {
     match (left, right) {
         (Values::Array(mut x), y) => {
@@ -231,7 +257,21 @@ fn map_contains_all(map: &HashMap<String, Box<Values>>, args: &Vec<Box<Ast>>,
     Vl(Values::Bool(true))
 }
 
-/// Indexes `right` from `left`
+fn arr_contains_all(arr: &Vec<Box<Values>>, args: &Vec<Box<Ast>>,
+    scope: &mut impl Environment) -> Res
+{
+    for e in args {
+        match eval(&*e, scope) {
+            Vl(x) => if arr.iter().find(|bx| {***bx == x}) == None {
+                return Vl(Values::Bool(false));
+            },
+            e => return e,
+        }
+    };
+    Vl(Values::Bool(true))
+}
+
+/// Indexes `left`[`right`]
 fn perform_index_op(left: Values, right: Values) -> Res {
     match (left, right) {
         (Values::Array(mut x), Values::Int(idx)) => {
@@ -304,8 +344,18 @@ fn perform_bop(vleft: Values, op: &Op, vright: Values) -> Res {
         (Values::Str(x), Op::Geq, Values::Str(y)) => Vl(Values::Bool(x >= y)),
         (Values::Str(x), Op::Leq, Values::Str(y)) => Vl(Values::Bool(x <= y)),
 
-        (Values::Bool(x), Op::Lor, Values::Bool(y)) => Vl(Values::Bool(x || y)),
-        (Values::Bool(x), Op::Land, Values::Bool(y)) => Vl(Values::Bool(x && y)),
+        (x, Op::Lor, y) => {
+            match (to_booly(&Vl(x)), to_booly(&Vl(y))) {
+                (Ok(x), Ok(y)) => Vl(Values::Bool(x || y)),
+                _ => str_exn("|| applied to invalid values"),
+            }
+        },
+        (x, Op::Land, y) => {
+            match (to_booly(&Vl(x)), to_booly(&Vl(y))) {
+                (Ok(x), Ok(y)) => Vl(Values::Bool(x && y)),
+                _ => str_exn("&& applied to invalid values"),
+            }
+        },
 
         (val, Op::Pipeline, f) => eval_pipeline(val, f),
 
@@ -364,7 +414,7 @@ fn promote_args(a: Values, b: Values, op: &Op) -> (Values, Values) {
 fn eval_if(guard: &Ast, body: &Ast, other: &Option<Box<Ast>>, 
     scope: &mut impl Environment) -> Res 
 {
-    match to_booly(eval(guard, scope)) {
+    match to_booly(&eval(guard, scope)) {
         Ok(true) => eval(body, &mut ScopeProxy::new(scope)),
         Ok(false) => {
             if let Some(ast) = other {
@@ -382,16 +432,17 @@ fn eval_if(guard: &Ast, body: &Ast, other: &Option<Box<Ast>>,
 /// and ranges with different first and second elements
 /// become true
 /// Everything else becomes false
-fn to_booly(b: Res) -> Result<bool, String> {
+fn to_booly(b: &Res) -> Result<bool, String> {
     match b {
         Vl(Values::Bool(true)) => Ok(true),
-        Vl(Values::Int(x)) if x != 0 => Ok(true),
+        Vl(Values::Int(x)) if *x != 0 => Ok(true),
         Vl(Values::Str(x)) if !x.is_empty() => Ok(true),
         Vl(Values::Float(x)) if x.abs() > 0.0001 => Ok(true),
         Vl(Values::Array(x)) if !x.is_empty() => Ok(true),
         Vl(Values::Range(a, b)) if a != b => Ok(true),
+        Vl(Values::Func(..)) => Ok(true),
         Vl(_) => Ok(false),
-        Bad(e) => Err(e),
+        Bad(e) => Err(e.to_string()),
        _ => Err("Return/exn value cannot be converted to bool".to_owned()),
     }
 }
@@ -413,23 +464,26 @@ fn eval_seq(children: &Vec<Box<Ast>>, scope: &mut impl Environment)
 
 /// Evaluates a let definition by adding `name` to `scope`
 /// Returns unit on success
-fn eval_let(names: &Vec<String>, ast: &Ast, scope: &mut impl Environment) 
+fn eval_let(names: &Vec<(String, bool)>, ast: &Ast, scope: &mut impl Environment) 
     -> Res 
 {
     match eval(ast, scope) {
         Vl(val) if names.len() == 1 => {
-            let nm = names.get(0).unwrap();
-            scope.add(nm.to_string(), val, false);
+            let (nm, is_mut) = names.get(0).unwrap();
+            scope.add(nm.to_string(), val, *is_mut);
             Vl(Values::Unit)
         },
         Vl(Values::Range(a, b)) if names.len() == 2 => {
-            scope.add(names.get(0).unwrap().to_string(), *a, false);
-            scope.add(names.get(1).unwrap().to_string(), *b, false);
+            let (nm1, mut1) = &names[0];
+            let (nm2, mut2) = &names[1];
+            scope.add(nm1.to_string(), *a, *mut1);
+            scope.add(nm2.to_string(), *b, *mut2);
             Vl(Values::Unit)
         },
         Vl(Values::Tuple(es)) if names.len() == es.len() => {
             for (nm, v) in names.iter().zip(es.into_iter()) {
-                scope.add(nm.to_string(), *v, false);
+                let (nm, is_mut) = nm;
+                scope.add(nm.to_string(), *v, *is_mut);
             }
             Vl(Values::Unit)
         },
@@ -445,11 +499,12 @@ fn eval_func(name: &String, params: &Vec<String>, ast: &Ast, postcondition: &Opt
     scope: &mut impl Environment)
     -> Res
 {
+    let nw_scope = Rc::new(RefCell::new(Scope::new()));
     let post = if postcondition.is_some() {
         let ptr = postcondition.as_ref().unwrap();
+        capture_into_scope(&*ptr, &mut nw_scope.borrow_mut(), scope);
         Some(*ptr.clone())
     } else { None };
-    let nw_scope = Rc::new(RefCell::new(Scope::new()));
     scope.add(name.to_string(), 
         Values::Func(params.clone(), ast.clone(), nw_scope.clone(), post), false);
     capture_into_scope(ast, &mut nw_scope.borrow_mut(), scope);
@@ -496,7 +551,14 @@ fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment
             capture_into_scope(&*right, scope, old_scope);
         },
         Ast::Let(_, ast) => capture_into_scope(&*ast, scope, old_scope),
-        Ast::Func(.., ast, _) | Ast::Lambda(_, ast) => capture_into_scope(&*ast, scope, old_scope),
+        Ast::Lambda(_, ast) => capture_into_scope(&*ast, scope, old_scope),
+        Ast::Func(.., ast, condition) => {
+            capture_into_scope(&*ast, scope, old_scope);
+            if let Some(ast) = condition {
+                println!("Capture condition");
+                capture_into_scope(&*ast, scope, old_scope);
+            }
+        },
         Ast::FnApply(name, args) => {
             if let Ok(val) = old_scope.find(name) {
                 scope.add(name.to_string(), val.clone(), false);
@@ -533,8 +595,7 @@ fn eval_fn_app(func: &Values, args: &Vec<Box<Ast>>, scope: &mut impl Environment
 }
 
 /// Evaluates the pipeline argument `left |> func`
-fn eval_pipeline(left: Values, func: Values) 
-    -> Res 
+fn eval_pipeline(left: Values, func: Values) -> Res 
 {
     apply_function(&func, vec![left], true)
 }  
@@ -573,7 +634,8 @@ fn apply_function(func: &Values, mut args: Vec<Values>, allow_incomplete: bool)
                 Rc::new(RefCell::new(sc.cpy())), postcondition.clone()))
         } else {
             match eval(ast, &mut sc) {
-                Res::Ret(v) | Vl(v) => check_func_post(v, postcondition, &*fn_scope.borrow()),
+                Res::Ret(v) | Vl(v) => 
+                    check_func_post(v, postcondition, &*fn_scope.borrow()),
                 e => e,
             }
         }
@@ -603,7 +665,9 @@ fn check_func_post(result: Values, postcondition: &Option<Ast>, scope: &impl Env
             match eval(&ast, &mut scope) {
                 Vl(_) if matches!(&ast, &Ast::Name(_)) => Vl(result),
                 Vl(Values::Bool(true)) => Vl(result),
-                _ => str_exn("Postcondition violated!")
+                /*e @ Bad(_) => e,
+                e @ Res::Exn(_) => e, */
+                x => Res::Exn(Values::Str(format!("Poscondition violated! Got {:?}", x))),
 
             }
         },
@@ -611,6 +675,7 @@ fn check_func_post(result: Values, postcondition: &Option<Ast>, scope: &impl Env
 }
 
 /// Evaluates an array of asts into an array of values
+/// `tuple` - set to true to return a tuple instead of an array
 fn eval_arr(elems: &Vec<Box<Ast>>, scope: &mut impl Environment, tuple: bool) -> Res {
     let mut lst = Vec::<Box<Values>>::new();
     for expr in elems {
@@ -639,6 +704,7 @@ fn eval_map(es: &HashMap<String, Box<Ast>>, scope: &mut impl Environment) -> Res
     Vl(Values::Map(map))
 }
 
+/// Evaluates a try block
 fn eval_try(body: &Ast, catch_var: &str, catch_body: &Ast, scope: &mut impl Environment) -> Res {
     scope.new_scope();
     match eval(body, scope) {
@@ -655,6 +721,7 @@ fn eval_try(body: &Ast, catch_var: &str, catch_body: &Ast, scope: &mut impl Envi
     }
 }
 
+/// Is true if `f_name` is the name of a hardcoded sapl function
 fn is_rust_func(f_name: &str) -> bool {
     match f_name {
         "typeof" | "assert" => true,
@@ -717,4 +784,130 @@ fn type_of(v: &Values) -> String {
         Values::Func(..) => "function".to_owned(),
         Values::Placeholder => "partial app placeholder".to_owned(),
     }
+}
+
+fn eval_for(names: &Vec<String>, iter: &Ast, if_expr: &Option<Box<Ast>>, 
+    body: &Ast, scope: &mut impl Environment) -> Res
+{
+    let ife = if let Some(ast) = if_expr {
+        Some(&**ast)
+    } else { None };
+    match eval(iter, scope) {
+        Vl(Values::Range(start, end)) if names.len() == 1 => 
+            eval_for_range(*start, *end, &names[0], ife, body, scope),
+        Vl(Values::Array(vals)) =>
+            eval_for_array(vals, names, ife, body, scope),
+        Vl(Values::Map(map)) => 
+            eval_for_map(map, names, ife, body, scope),
+        x => Res::Exn(Values::Str(format!("Cannot iterate over {:?}", x))),
+
+    }
+}
+
+fn eval_for_range(start: Values, end: Values, name: &String, ife: Option<&Ast>,
+    body: &Ast, scope: &mut impl Environment) -> Res 
+{
+    if let (Values::Int(start), Values::Int(end)) = (start, end) {
+        let min = std::cmp::min(start, end);
+        let max = std::cmp::max(start, end);
+        let iter = if min == start { 
+            Box::new(min..max) as Box<dyn Iterator<Item = _>>
+        } else { 
+            Box::new((min..max).rev())
+        };
+
+        for i in iter {
+            let mut child = ScopeProxy::new(scope);
+            child.add(name.to_owned(), Values::Int(i), false);
+
+            if !filter_out_for_loop_iter(ife, &mut child) {
+                match eval(body, &mut child) {
+                    Vl(_) => (),
+                    e => return e,
+                }
+            }
+        }
+        Vl(Values::Unit)
+    } else {
+        str_exn("Cannot iterate through non-int range")
+    }
+}
+
+/// Determines if the for loop iteration will be skipped
+/// Does not skip if `expr` is None or evaluating `expr` results in a value that
+/// is true-ish (true when applied to `to_booly`)
+fn filter_out_for_loop_iter(expr: Option<&Ast>, scope: &mut impl Environment) -> bool {
+    if let Some(ast) = expr {
+        match eval(ast, scope) {
+            x if to_booly(&x) == Ok(true) => false,
+            _ => true,
+        }
+    } else { false }
+}
+
+fn eval_for_array(arr: Vec<Box<Values>>, names: &Vec<String>, 
+    ife: Option<&Ast>, body: &Ast, scope: &mut impl Environment) -> Res 
+{
+    for val in arr.into_iter() {
+        let val = *val;
+        let mut child_scope = ScopeProxy::new(scope);
+        match (names.len(), val) {
+            (x, Values::Tuple(tup)) if x == tup.len() => {
+                for (name, v) in names.iter().zip(tup.into_iter()) {
+                    child_scope.add(name.to_string(), *v, false);
+                }
+            },
+            (1, v) => child_scope.add(names[0].to_string(), v, false),
+            _ => return str_exn("Invalid structured binding in for loop"),
+        };
+
+        if !filter_out_for_loop_iter(ife, &mut child_scope) {
+            match eval(body, &mut child_scope) {
+                Vl(_) => (),
+                e => return e,
+            }
+        }
+    }
+    Vl(Values::Unit)
+}
+
+fn eval_for_map(map: HashMap<String, Box<Values>>, names: &Vec<String>, 
+    ife: Option<&Ast>, body: &Ast, scope: &mut impl Environment) -> Res 
+{
+    for (key, val) in map.into_iter() {
+        let mut child_scope = ScopeProxy::new(scope);
+        match names.len() {
+            2 => {
+                child_scope.add(names[0].to_string(), Values::Str(key), false);
+                child_scope.add(names[1].to_string(), *val, false);
+            },
+            1 => child_scope.add(names[0].to_string(), 
+                Values::Tuple(vec![Box::new(Values::Str(key)), val]), false),
+            _ => return str_exn("Invalid structured binding in for loop"),
+        };
+
+        if !filter_out_for_loop_iter(ife, &mut child_scope) {
+            match eval(body, &mut child_scope) {
+                Vl(_) => (),
+                e => return e,
+            }
+        }
+    }
+    Vl(Values::Unit)
+}
+
+fn eval_while(guard: &Ast, body: &Ast, scope: &mut impl Environment) -> Res {
+    loop {
+        match eval(guard, scope) {
+            Vl(val) => 
+                if Values::Bool(true) == val {
+                    match eval(body, &mut ScopeProxy::new(scope)) {
+                        Vl(_) => (),
+                        e => return e,
+                    }
+                } else { break },
+            e => return e,
+        }
+    }
+    Vl(Values::Unit)
 }

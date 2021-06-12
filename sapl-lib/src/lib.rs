@@ -295,7 +295,7 @@ mod tests {
     #[test]
     fn let_test() {
         assert_parse_str_eq("let x = 5; x", Ast::Seq(vec![
-            Box::new(Ast::Let(vec!["x".to_owned()], Box::new(Ast::VInt(5)))),
+            Box::new(Ast::Let(vec![("x".to_owned(), false)], Box::new(Ast::VInt(5)))),
             Box::new(Ast::Name("x".to_owned()))
         ]));
         assert_val_eq("let x = 5; x", Values::Int(5));
@@ -416,7 +416,7 @@ mod tests {
             Tokens::Comma, Tokens::OpQ, Tokens::RParen]);
 
         assert_parse_str_eq("let add10 = add(10, ?)", 
-            Ast::Let(vec!["add10".to_owned()], Box::new(
+            Ast::Let(vec![("add10".to_owned(), false)], Box::new(
                 Ast::FnApply("add".to_owned(), 
                 vec![Box::new(Ast::VInt(10)), Box::new(Ast::Placeholder)]))
         ));
@@ -559,7 +559,6 @@ mod tests {
         assert_val_eq("let x = 3.14; !x", Values::Float(-3.14));
 
         assert_val_eq(r#"
-        let lst = [];
         let idx = 10;
         if lst? && idx?:
             10
@@ -774,6 +773,35 @@ mod tests {
         let x, y = tie(10, 20);
         x + y
         "#, Values::Int(30));
+
+        assert_val_eq(r#"
+        fun valid_name str -> bool {
+            let names = [
+                "Billy",
+                "Jackson",
+                "Persephone"
+            ];
+            names.contains(str)
+        }
+
+        fun meet person -> valid_name(string) {
+            person.name
+        }
+
+        let p = {name: "Jackson", age: 10};
+        meet(p)
+        "#, Values::Str("Jackson".to_owned()));
+
+        assert_val_eq(r#"
+        fun get_add x -> (result + result)? {
+            if x == 0: "Hello "
+            else if x == 1: 10
+            else if x == 2: 3.14
+            else 10
+        }
+
+        get_add(0) + get_add(1) + get_add(2)
+        "#, Values::Str("Hello 103.14".to_owned()));
     }
 
     #[test]
@@ -786,5 +814,61 @@ mod tests {
         
         error()
         "#, Values::Unit)
+    }
+
+    #[test]
+    #[should_panic]
+    fn bad_postcondition2() {
+        assert_val_eq(r#"
+        fun error -> result * result {
+            []
+        }
+        
+        error()
+        "#, Values::Unit)
+    }
+
+    #[test]
+    fn for_test() {
+        assert_val_eq(r#"
+        let var count = 0;
+        let rng = 0 .. 0 - 100;
+        for i in rng if i % 2 == 0 {
+            count = count - i
+        }
+        count
+        "#, Values::Int(2550));
+
+        assert_val_eq(r#"
+        let var result = '';
+        let lst = [
+            ('Cat', 10),
+            ('Apple', 2),
+            ('Pear', 3)
+        ];
+        for nm, num in lst if num < 10 {
+            result = result + nm + ':' + num + ', '
+        }
+        result
+        "#, Values::Str("Apple:2, Pear:3, ".to_owned()));
+
+        assert_val_eq(r#"
+        let var i = 0;
+        for idx in 0..100:
+            i = i + idx
+        i
+        "#, Values::Int(4950));
+    }
+
+    #[test]
+    fn while_test() {
+        assert_val_eq(r#"
+        let var count = 0;
+        while count < 100:
+            count = count + 1
+        
+        count
+        "#, Values::Int(100));
+
     }
 }

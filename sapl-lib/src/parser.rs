@@ -11,6 +11,7 @@ pub enum Op {
     AsBool,
     Index,
     Return, Throw,
+    Assign,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -22,7 +23,7 @@ pub enum Ast {
     Bop(Box<Ast>, Op, Box<Ast>),
     If(Box<Ast>, Box<Ast>, Option<Box<Ast>>),
     Seq(Vec<Box<Ast>>),
-    Let(Vec<String>, Box<Ast>),
+    Let(Vec<(String, bool)>, Box<Ast>),
     Name(String),
     Func(String, Vec<String>, Box<Ast>, Option<Box<Ast>>),
     Lambda(Vec<String>, Box<Ast>),
@@ -33,6 +34,8 @@ pub enum Ast {
     Uop(Box<Ast>, Op),
     Map(HashMap<String, Box<Ast>>),
     Try(Box<Ast>, String, Box<Ast>),
+    For(Vec<String>, Box<Ast>, Option<Box<Ast>>, Box<Ast>),
+    While(Box<Ast>, Box<Ast>),
 }
 
 /// Parses a stream of tokens `stream` into an Abstract Syntax Tree
@@ -80,9 +83,9 @@ fn parse_seq(ast: Result<Ast, String>, stream: &mut VecDeque<Tokens>) -> Result<
 /// True if `ast` can be in a sequence without a `;` following it
 fn can_elide_seq(ast: &Ast) -> bool {
     match ast {
-        Ast::If(..) |
-        Ast::Func(..) |
-        Ast::Try(..) => true,
+        Ast::If(..) | Ast::Func(..) |
+        Ast::Try(..) | Ast::For(..) |
+        Ast::While(..) => true,
         _ => false,
     }
 }
@@ -95,7 +98,8 @@ fn tok_is_expr(tok: &Tokens) -> bool {
         | Tokens::LParen | Tokens::If 
         | Tokens::Name(_) | Tokens::OpQ 
         | Tokens::LBracket | Tokens::OpNegate 
-        | Tokens::LBrace | Tokens::Try =>
+        | Tokens::LBrace | Tokens::Try 
+        | Tokens::For | Tokens::While =>
         true,
         x if tok_is_pre_uop(x) => true,
         _ => false,
@@ -120,6 +124,7 @@ fn tok_is_bop(tok: &Tokens) -> bool {
         | Tokens::OpNeq | Tokens::OpGeq | Tokens::OpGt
         | Tokens::OpPipeline | Tokens::OpDot 
         | Tokens::OpRange | Tokens::OpConcat
+        | Tokens::OpAssign
         => true,
         _ => false,
     }
@@ -208,6 +213,7 @@ fn precedence(op: Op) -> i32 {
         Op::Pipeline => 4,
         Op::Range | Op::Concat => 3,
         Op::Return | Op::Throw => 2,
+        Op::Assign => 1,
     }
 }
 
@@ -236,6 +242,7 @@ fn tok_to_op(tok: &Tokens) -> Option<Op> {
         Tokens::Return => Some(Op::Return),
         Tokens::OpConcat => Some(Op::Concat),
         Tokens::Throw => Some(Op::Throw),
+        Tokens::OpAssign => Some(Op::Assign),
         _ => None,
     }
 }
@@ -276,6 +283,8 @@ fn parse_expr_left(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
         Some(Tokens::LBrace) => parse_map(consume(stream)),
         Some(Tokens::Fun) => parse_func(consume(stream)),
         Some(Tokens::Try) => parse_try(consume(stream)),
+        Some(Tokens::For) => parse_for_loop(consume(stream)),
+        Some(Tokens::While) => parse_while_loop(consume(stream)),
         Some(tok) if tok_is_pre_uop(tok) => parse_pre_uop(stream),
         Some(tok) if tok_is_val(tok) => tok_to_val(stream.pop_front().unwrap()),
         t => Err(format!("Unexpected {:?} in expr left branch", t)),
@@ -447,18 +456,7 @@ fn parse_defn(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
 /// Parses a let definition
 /// Requires `let` has already been consumed
 fn parse_let(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
-    if let Some(Tokens::Name(nm)) = stream.pop_front() {
-        let mut names = vec![nm];
-
-        while stream.front() == Some(&Tokens::Comma) {
-            stream.pop_front();
-            if let Some(Tokens::Name(nm)) = stream.pop_front() {
-                names.push(nm)
-            } else {
-                return Err("Missing valid identifier in structured binding".to_owned())
-            }
-        }
-
+    if let Some(names) = parse_comma_sep_names(stream) {
         if stream.pop_front() != Some(Tokens::OpAssign) { 
             return Err("Missing '=' in let defn".to_owned())
         }
@@ -466,8 +464,33 @@ fn parse_let(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
         if val.is_err() { return val; }
         Ok(Ast::Let(names, Box::new(val.unwrap())))
     } else {
-        Err("Missing valid identifier name in let".to_owned())
+        Err("Missing constant name(s) in let".to_owned())
     }
+}
+
+/// Parses stream for names separated by commas
+/// Requires the first name is the first token in the stream
+/// If no names are found, does not mutate stream
+/// Returns an array of name, mutability pairs
+fn parse_comma_sep_names(stream: &mut VecDeque<Tokens>) -> Option<Vec<(String, bool)>> {
+    let is_var = stream.front() == Some(&Tokens::Var);
+    if is_var {consume(stream);}
+    if let Some(Tokens::Name(nm)) = stream.front() {       
+        let mut names = vec![(nm.to_string(), is_var)];
+        consume(stream);
+
+        while stream.front() == Some(&Tokens::Comma) {
+            stream.pop_front();
+            let is_var = stream.front() == Some(&Tokens::Var);
+            if is_var { consume(stream); }
+            if let Some(Tokens::Name(nm)) = stream.pop_front() {
+                names.push((nm, is_var))
+            } else {
+                return None
+            }
+        }
+        Some(names)
+    } else { None }
 }
 
 /// Parses a function definition or expression
@@ -511,6 +534,7 @@ fn get_function_params(stream: &mut VecDeque<Tokens>) -> Vec<String> {
 /// Parses a function body and postcondition if there is one
 /// `need_brace`: true if the function body must be surrounded by braces
 /// Gets the body, postcondition pair
+/// If there is a postcondition, braces are required
 fn get_function_body(stream: &mut VecDeque<Tokens>, need_brace: bool) 
     -> (Result<Ast, String>, Option<Box<Ast>>)
 {
@@ -652,5 +676,51 @@ fn parse_map(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
         Err("Map missing closing brace".to_owned())
     } else {
         Ok(Ast::Map(map))
+    }
+}
+
+fn parse_for_loop(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
+    if let Some(names) = parse_comma_sep_names(stream) {
+        if stream.pop_front() != Some(Tokens::In) { 
+            return Err("For loop missing in".to_owned())
+        }
+
+        let iter =
+        match parse_expr(stream, None) {
+            e @ Err(_) => return e,
+            Ok(ast) => Box::new(ast)
+        };
+
+        let if_expr = 
+        if Some(&Tokens::If) == stream.front() {
+            consume(stream);
+            match parse_expr(stream, None) {
+                e @ Err(_) => return e,
+                Ok(ast) => Some(Box::new(ast)),
+            }
+        } else { None };
+
+        let body = 
+        match parse_colon_brace_block(stream, false) {
+            e @ Err(_) => return e,
+            Ok(ast) => Box::new(ast),
+        };
+
+        let mut v = Vec::<String>::new();
+        for (nm, _) in names.into_iter() {
+            v.push(nm);
+        }
+        Ok(Ast::For(v, iter, if_expr, body))
+    } else { Err("For missing names".to_owned()) }
+}
+
+fn parse_while_loop(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
+    if let Ok(expr) = parse_expr(stream, None) {
+        match parse_colon_brace_block(stream, false) {
+            Ok(body) => Ok(Ast::While(Box::new(expr), Box::new(body))),
+            e => e,
+        }
+    } else {
+        Err("While loop missing condition".to_owned())
     }
 }

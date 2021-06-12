@@ -12,6 +12,7 @@ pub trait Environment {
     /// mutability `mutable`
     /// Will add the value to the first scope in the stack and shadow previous
     /// values with the same name if they exist
+    /// If `name` is `"_"`, the value is not added
     fn add(&mut self, name: String, val: Values, mutable: bool);
 
     /// Updates an existing value in the environment
@@ -68,7 +69,9 @@ impl Environment for Scope {
     }
 
     fn add(&mut self, name: String, val: Values, mutable: bool) {
-        self.names.front_mut().unwrap().insert(name, (val, mutable));
+        if name != "_" {
+            self.names.front_mut().unwrap().insert(name, (val, mutable));
+        }
     }
 
     fn update(&mut self, name: &str, val: Values) -> bool {
