@@ -24,7 +24,7 @@ pub enum Ast {
     Seq(Vec<Box<Ast>>),
     Let(Vec<String>, Box<Ast>),
     Name(String),
-    Func(String, Vec<String>, Box<Ast>),
+    Func(String, Vec<String>, Box<Ast>, Option<Box<Ast>>),
     Lambda(Vec<String>, Box<Ast>),
     FnApply(String, Vec<Box<Ast>>),
     Array(Vec<Box<Ast>>),
@@ -81,7 +81,8 @@ fn parse_seq(ast: Result<Ast, String>, stream: &mut VecDeque<Tokens>) -> Result<
 fn can_elide_seq(ast: &Ast) -> bool {
     match ast {
         Ast::If(..) |
-        Ast::Func(..) => true,
+        Ast::Func(..) |
+        Ast::Try(..) => true,
         _ => false,
     }
 }
@@ -296,23 +297,43 @@ fn parse_paren_expr(stream: &mut VecDeque<Tokens>) -> Result<Ast, String>
 }
 
 fn parse_try(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
-    let is_brace = stream.front() == &Tokens::LBrace;
-    if stream.pop_front() == Tokens::Comma || is_brace {
-        let body = match parse(stream) {
-            Ok(ast) => ast,
-            e => return e,
-        };
-        if is_brace && stream.pop_front() != Tokens::RBrace { 
-            return Err("Missing brace in try".to_owned());
-        }
-        if stream.pop_front() != Tokens::Catch { 
-            return Err("Missing catch block".to_owned());
-        }
-        if let Tokens::Name(x) = stream.pop_front() {
-
+    let body = parse_colon_brace_block(stream, false);
+    if Some(Tokens::Catch) == stream.pop_front() {
+        if let Some(Tokens::Name(x)) = stream.pop_front() {
+            let catch = parse_colon_brace_block(stream, false);
+            match (body, catch) {
+                (Ok(body), Ok(catch)) => Ok(Ast::Try(Box::new(body), x, Box::new(catch))),
+                (e @ Err(_), Ok(_)) | (Ok(_), e @ Err(_)) => e,
+                (e, _) => e,
+            }
         } else {
-            return Err("Missing catch variable".to_owned());
+            Err("Missing catch variable".to_owned())
         }
+    } else {
+        Err("Missing catch block to try".to_owned())
+    }
+}
+
+/// Parses a block that can start with a colon or be wrapped in braces
+/// `only_expr_wo_brace` - set to true if the block can only contain an expression if
+/// there are no braces
+fn parse_colon_brace_block(stream: &mut VecDeque<Tokens>, only_expr_wo_brace: bool) 
+    -> Result<Ast, String> 
+{
+    let is_brace = stream.front() == Some(&Tokens::LBrace);
+    if stream.pop_front() == Some(Tokens::Colon) || is_brace {
+        let body = if only_expr_wo_brace && !is_brace {
+            parse_expr(stream, None)
+        } else {
+            parse(stream)
+        };
+        if is_brace && stream.pop_front() != Some(Tokens::RBrace) { 
+            Err("Missing brace in block".to_owned())
+        } else {
+            body
+        }
+    } else {
+        Err("Missing colon or left brace in block".to_owned())
     }
 }
 
@@ -456,8 +477,8 @@ fn parse_func(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
         Some(Tokens::Name(fn_name)) => {
             let params = get_function_params(stream);
             match get_function_body(stream, true) {
-                Ok(body) => Ok(Ast::Func(fn_name, params, Box::new(body))),
-                e => e,
+                (Ok(body), post) => Ok(Ast::Func(fn_name, params, Box::new(body), post)),
+                (e, _) => e,
             }
         },
         Some(Tokens::LParen) => {
@@ -466,8 +487,8 @@ fn parse_func(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
                 Err("Lambda missing closing parenthesis".to_owned())
             } else {
                 match get_function_body(stream, false) {
-                    Ok(body) => Ok(Ast::Lambda(params, Box::new(body))),
-                    e => e,
+                    (Ok(body), _) => Ok(Ast::Lambda(params, Box::new(body))),
+                    (e, _) => e,
                 }
             }
         },
@@ -487,21 +508,31 @@ fn get_function_params(stream: &mut VecDeque<Tokens>) -> Vec<String> {
     params
 }
 
-/// Parses a function body
-/// Requires the opening curly brace is the first in the queue
+/// Parses a function body and postcondition if there is one
 /// `need_brace`: true if the function body must be surrounded by braces
-fn get_function_body(stream: &mut VecDeque<Tokens>, need_brace: bool) -> Result<Ast, String> {
+/// Gets the body, postcondition pair
+fn get_function_body(stream: &mut VecDeque<Tokens>, need_brace: bool) 
+    -> (Result<Ast, String>, Option<Box<Ast>>)
+{
+    let postcondition =
+    if Some(&Tokens::Rightarrow) == stream.front() {
+        consume(stream);
+        match parse_expr(stream, None) {
+            Ok(ast) => Some(Box::new(ast)),
+            e => return (e, None),
+        }
+    } else { None };
     let is_brace = stream.front() == Some(&Tokens::LBrace);
-    if !is_brace && need_brace {
-        return Err("Missing brace in function body".to_owned());
+    if !is_brace && (need_brace || postcondition.is_some()) {
+        return (Err("Missing brace in function body".to_owned()), None);
     } else if is_brace {
         consume(stream);
     }
     let expr = if !is_brace { parse_expr(stream, None) } else { parse(stream) };
     if is_brace && Some(Tokens::RBrace) != stream.pop_front() {
-        return Err("Missing closing brace in function body".to_owned())
+        return (Err("Missing closing brace in function body".to_owned()), None)
     }
-    expr
+    (expr, postcondition)
 }
 
 /// Parses a series of tokens within a `[]` as a list

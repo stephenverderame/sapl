@@ -686,4 +686,105 @@ mod tests {
         "#
         , Values::Int(74))
     }
+
+    #[test]
+
+    fn try_test() {
+        assert_val_eq(r#"
+        fun idiv x y{
+            try:
+                x / y
+            catch _:
+                0
+        }
+
+        idiv(100, 0) + idiv(100, 10)
+        "#, Values::Int(10));
+
+        assert_val_eq(r#"
+        try:
+            let name = 'Freya' + 10 ** 3;
+            let town = 'Smithtown';
+            throw name + ' from ' + town
+        catch str:
+            str
+        "#, Values::Str("Freya1000 from Smithtown".to_owned()));
+    }
+
+    #[test]
+    fn typeof_test() {
+        assert_val_eq(r#"
+        typeof((4, 5, 3))
+        "#, Values::Str("tuple3".to_owned()));
+
+        assert_val_eq(r#"
+        typeof(5?)
+        "#, Values::Str("bool".to_owned()));
+
+        assert_val_eq(r#"
+        typeof([] @ 'Helen')
+        "#, Values::Str("array".to_owned()));
+
+        assert_val_eq(r#"
+        let name = 'Hailey';
+        assert(typeof(name) == 'string')
+        "#, Values::Unit);
+    }
+
+    #[test]
+    #[should_panic]
+    fn assert_fail() {
+        assert_val_eq("assert(4 < 3, 'Should panic')", Values::Unit);
+    }
+
+    #[test]
+    fn postcondition_test() {
+        assert_val_eq(r#"
+        let max = fun (x y) if x > y: x else y;
+        let min = fun (x y) if x < y: x else y;
+
+        fun gcd x y -> int >= 1 {
+            assert(x >= 1 || y >= 1);
+
+            let max = max(x, y);
+            let min = min(x, y);
+            if x <= 1 || y <= 1:
+                max
+            else
+                gcd(max - min, min)
+
+        }
+
+        gcd(10, 5)
+        "#, Values::Int(5));
+
+        assert_val_eq(r#"
+        fun get_name x -> string {
+            return 'Joe'
+        }
+
+        10 |> get_name
+        "#, Values::Str("Joe".to_owned()));
+
+        assert_val_eq(r#"
+        fun tie x y -> tuple2 {
+            return (x, y)
+        }
+
+        let x, y = tie(10, 20);
+        x + y
+        "#, Values::Int(30));
+    }
+
+    #[test]
+    #[should_panic]
+    fn bad_postcondition() {
+        assert_val_eq(r#"
+        fun error -> unit {
+            4.3
+        }
+        
+        error()
+        "#, Values::Unit)
+    }
 }

@@ -14,7 +14,7 @@ pub enum Values {
     Str(String),
     Unit,
     Bool(bool),
-    Func(Vec<String>, Ast, Rc<RefCell<Scope>>),
+    Func(Vec<String>, Ast, Rc<RefCell<Scope>>, Option<Ast>),
     Array(Vec<Box<Values>>),
     Tuple(Vec<Box<Values>>),
     Range(Box<Values>, Box<Values>),
@@ -58,8 +58,11 @@ fn eval(ast: &Ast, scope: &mut impl Environment) -> Res {
         Ast::If(guard, body, other) => eval_if(&*guard, &*body, other, scope),
         Ast::Seq(children) => eval_seq(children, scope),
         Ast::Let(name, ast) => eval_let(name, &*ast, scope),
-        Ast::Func(name, params, ast) => eval_func(name, params, &*ast, scope),
+        Ast::Func(name, params, ast, post) => 
+            eval_func(name, params, &*ast, post, scope),
         Ast::Lambda(params, ast) => eval_lambda(params, &*ast, scope),
+        Ast::FnApply(name, args) if is_rust_func(&name[..]) => 
+            eval_rust_func(&name[..], args, scope),
         Ast::FnApply(name, args) => match scope.find(name) {
             Ok(val) => eval_fn_app(val, args, &mut ImmuScope::from(scope)),
             Err(e) => Bad(e),
@@ -68,6 +71,7 @@ fn eval(ast: &Ast, scope: &mut impl Environment) -> Res {
         Ast::Uop(ast, op) => eval_uop(ast, op, scope),
         Ast::Tuple(elems) => eval_arr(elems, scope, true),
         Ast::Map(es) => eval_map(es, scope),
+        Ast::Try(body, var, catch) => eval_try(&*body, &var[..], &*catch, scope),
         Ast::Placeholder => Vl(Values::Placeholder),
     }
 }
@@ -437,12 +441,17 @@ fn eval_let(names: &Vec<String>, ast: &Ast, scope: &mut impl Environment)
 /// Evaluates a function definition and adds the function to `scope`
 /// Captures names references in `ast` that are also in `scope` by copying them into a new
 /// environment
-fn eval_func(name: &String, params: &Vec<String>, ast: &Ast, scope: &mut impl Environment)
+fn eval_func(name: &String, params: &Vec<String>, ast: &Ast, postcondition: &Option<Box<Ast>>,
+    scope: &mut impl Environment)
     -> Res
 {
+    let post = if postcondition.is_some() {
+        let ptr = postcondition.as_ref().unwrap();
+        Some(*ptr.clone())
+    } else { None };
     let nw_scope = Rc::new(RefCell::new(Scope::new()));
     scope.add(name.to_string(), 
-        Values::Func(params.clone(), ast.clone(), nw_scope.clone()), false);
+        Values::Func(params.clone(), ast.clone(), nw_scope.clone(), post), false);
     capture_into_scope(ast, &mut nw_scope.borrow_mut(), scope);
     Vl(Values::Unit)
 }
@@ -456,9 +465,9 @@ fn eval_lambda(params: &Vec<String>, ast: &Ast, scope: &mut impl Environment)
 {
     let nw_scope = Rc::new(RefCell::new(Scope::new()));
     nw_scope.borrow_mut().add("this".to_owned(), 
-        Values::Func(params.clone(), ast.clone(), nw_scope.clone()), false);
+        Values::Func(params.clone(), ast.clone(), nw_scope.clone(), None), false);
     capture_into_scope(ast, &mut nw_scope.borrow_mut(), scope);
-    Vl(Values::Func(params.clone(), ast.clone(), nw_scope))
+    Vl(Values::Func(params.clone(), ast.clone(), nw_scope, None))
 }
 
 /// Searches for names in `ast` and captures them by copying their corresponding value from
@@ -487,7 +496,7 @@ fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment
             capture_into_scope(&*right, scope, old_scope);
         },
         Ast::Let(_, ast) => capture_into_scope(&*ast, scope, old_scope),
-        Ast::Func(.., ast) | Ast::Lambda(_, ast) => capture_into_scope(&*ast, scope, old_scope),
+        Ast::Func(.., ast, _) | Ast::Lambda(_, ast) => capture_into_scope(&*ast, scope, old_scope),
         Ast::FnApply(name, args) => {
             if let Ok(val) = old_scope.find(name) {
                 scope.add(name.to_string(), val.clone(), false);
@@ -538,7 +547,7 @@ fn eval_pipeline(left: Values, func: Values)
 fn apply_function(func: &Values, mut args: Vec<Values>, allow_incomplete: bool) 
     -> Res 
 {
-    if let Values::Func(params, ast, fn_scope) = func {
+    if let Values::Func(params, ast, fn_scope, postcondition) = func {
         if allow_incomplete && args.len() < params.len() {
             args.append(&mut vec![Values::Placeholder; params.len() - args.len()]);
         } else if params.len() != args.len() { 
@@ -561,15 +570,43 @@ fn apply_function(func: &Values, mut args: Vec<Values>, allow_incomplete: bool)
         }
         if is_partial {
             Vl(Values::Func(missing_params, ast.clone(), 
-                Rc::new(RefCell::new(sc.cpy()))))
+                Rc::new(RefCell::new(sc.cpy())), postcondition.clone()))
         } else {
             match eval(ast, &mut sc) {
-                Res::Ret(v) => Vl(v),
+                Res::Ret(v) | Vl(v) => check_func_post(v, postcondition, &*fn_scope.borrow()),
                 e => e,
             }
         }
     } else {
         str_exn("Not a function being applied")
+    }
+}
+
+/// Checks the function postcondition
+/// Returns `result` if the postcondition is true or the postcondition contains a valid name only
+/// Otherwise, returns an exception
+/// When evaluating the postcondition, adds to the postcondition expression scope a name which is the type of the result
+/// that stores the value of the result
+fn check_func_post(result: Values, postcondition: &Option<Ast>, scope: &impl Environment) -> Res {
+    match postcondition {
+        None => Vl(result),
+        Some(ast) => {
+            let mut scope = ImmuScope::from(scope);
+            match &result {
+                Values::Float(_) | Values::Int(_) => {
+                    scope.add("number".to_owned(), result.clone(), false);
+                },
+                _ => (),
+            }
+            scope.add(type_of(&result), result.clone(), false);
+            scope.add("result".to_owned(), result.clone(), false);
+            match eval(&ast, &mut scope) {
+                Vl(_) if matches!(&ast, &Ast::Name(_)) => Vl(result),
+                Vl(Values::Bool(true)) => Vl(result),
+                _ => str_exn("Postcondition violated!")
+
+            }
+        },
     }
 }
 
@@ -600,4 +637,84 @@ fn eval_map(es: &HashMap<String, Box<Ast>>, scope: &mut impl Environment) -> Res
         };
     }
     Vl(Values::Map(map))
+}
+
+fn eval_try(body: &Ast, catch_var: &str, catch_body: &Ast, scope: &mut impl Environment) -> Res {
+    scope.new_scope();
+    match eval(body, scope) {
+        Res::Exn(exn) => {
+            scope.pop_scope();
+            let mut child = ScopeProxy::new(scope);
+            child.add(catch_var.to_owned(), exn, false);
+            eval(catch_body, &mut child)
+        },
+        e => {
+            scope.pop_scope();
+            e
+        },
+    }
+}
+
+fn is_rust_func(f_name: &str) -> bool {
+    match f_name {
+        "typeof" | "assert" => true,
+        _ => false,
+    }
+}
+
+/// Evaluates a hardcoded function
+fn eval_rust_func(f_name: &str, args: &Vec<Box<Ast>>, scope: &mut impl Environment) -> Res {
+    match f_name {
+        "typeof" => {
+            if args.len() == 1 {
+                match eval(&*args[0], scope) {
+                   Vl(v) => Vl(Values::Str(type_of(&v))),
+                   Res::Ret(v) => Vl(Values::Str(format!("return of {}", type_of(&v)))),
+                   Res::Exn(v) => Vl(Values::Str(format!("exn of {}", type_of(&v)))),
+                   b => b,
+                }
+            } else {
+                Bad("typeof invalid argument. Expects 1".to_owned())
+            }
+        },
+        "assert" => {
+            if args.len() == 2 {
+                if let Vl(Values::Str(msg)) = eval(&*args[1], scope) {
+                    match eval(&*args[0], scope) {
+                        Vl(Values::Bool(true)) => Vl(Values::Unit),
+                        Vl(Values::Bool(false)) => Bad(format!("Assertation error: '{}'", msg)),
+                        _ => Bad("assert() must have a boolean to assert".to_owned()),
+                    }
+                } else {
+                    Bad("assert() second parameter must be an error message".to_owned())
+                }
+            } else if args.len() == 1 {
+                match eval(&*args[0], scope) {
+                    Vl(Values::Bool(true)) => Vl(Values::Unit),
+                    Vl(Values::Bool(false)) => Bad(format!("Assertation error")),
+                    _ => Bad("assert() must have a boolean to assert".to_owned()),
+                }
+            } else {
+                Bad("assert() can only have 1 or 2 parameters".to_owned())
+            }
+        },
+        _ => Bad("Not a hardcoded function".to_owned()),
+    }
+}
+
+/// Gets the string representation of the type of `v`
+fn type_of(v: &Values) -> String {
+    match v {
+        Values::Int(_) => "int".to_owned(),
+        Values::Bool(_) => "bool".to_owned(),
+        Values::Unit => "unit".to_owned(),
+        Values::Float(_) => "float".to_owned(),
+        Values::Str(_) => "string".to_owned(),
+        Values::Range(..) => "range".to_owned(),
+        Values::Tuple(x) => format!("tuple{}", x.len()),
+        Values::Array(_) => "array".to_owned(),
+        Values::Map(_) => "map".to_owned(),
+        Values::Func(..) => "function".to_owned(),
+        Values::Placeholder => "partial app placeholder".to_owned(),
+    }
 }
