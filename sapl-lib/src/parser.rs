@@ -98,8 +98,7 @@ fn tok_is_expr(tok: &Tokens) -> bool {
         | Tokens::LParen | Tokens::If 
         | Tokens::Name(_) | Tokens::OpQ 
         | Tokens::LBracket | Tokens::OpNegate 
-        | Tokens::LBrace | Tokens::Try 
-        | Tokens::For | Tokens::While =>
+        | Tokens::LBrace | Tokens::Try  =>
         true,
         x if tok_is_pre_uop(x) => true,
         _ => false,
@@ -108,7 +107,8 @@ fn tok_is_expr(tok: &Tokens) -> bool {
 
 fn tok_is_defn(tok: &Tokens) -> bool {
     match *tok {
-        Tokens::Let | Tokens::Fun => true,
+        Tokens::Let | Tokens::Fun | 
+        Tokens::For | Tokens::While => true,
         _ => false,
     }
 }
@@ -283,8 +283,6 @@ fn parse_expr_left(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
         Some(Tokens::LBrace) => parse_map(consume(stream)),
         Some(Tokens::Fun) => parse_func(consume(stream)),
         Some(Tokens::Try) => parse_try(consume(stream)),
-        Some(Tokens::For) => parse_for_loop(consume(stream)),
-        Some(Tokens::While) => parse_while_loop(consume(stream)),
         Some(tok) if tok_is_pre_uop(tok) => parse_pre_uop(stream),
         Some(tok) if tok_is_val(tok) => tok_to_val(stream.pop_front().unwrap()),
         t => Err(format!("Unexpected {:?} in expr left branch", t)),
@@ -306,10 +304,10 @@ fn parse_paren_expr(stream: &mut VecDeque<Tokens>) -> Result<Ast, String>
 }
 
 fn parse_try(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
-    let body = parse_colon_brace_block(stream, false);
+    let body = parse_colon_brace_block(stream, false, true);
     if Some(Tokens::Catch) == stream.pop_front() {
         if let Some(Tokens::Name(x)) = stream.pop_front() {
-            let catch = parse_colon_brace_block(stream, false);
+            let catch = parse_colon_brace_block(stream, false, false);
             match (body, catch) {
                 (Ok(body), Ok(catch)) => Ok(Ast::Try(Box::new(body), x, Box::new(catch))),
                 (e @ Err(_), Ok(_)) | (Ok(_), e @ Err(_)) => e,
@@ -326,11 +324,14 @@ fn parse_try(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
 /// Parses a block that can start with a colon or be wrapped in braces
 /// `only_expr_wo_brace` - set to true if the block can only contain an expression if
 /// there are no braces
-fn parse_colon_brace_block(stream: &mut VecDeque<Tokens>, only_expr_wo_brace: bool) 
+/// `can_omit` - set to true if the block can omit : or {}
+fn parse_colon_brace_block(stream: &mut VecDeque<Tokens>, only_expr_wo_brace: bool, can_omit : bool) 
     -> Result<Ast, String> 
 {
     let is_brace = stream.front() == Some(&Tokens::LBrace);
-    if stream.pop_front() == Some(Tokens::Colon) || is_brace {
+    let is_colon = stream.front() == Some(&Tokens::Colon);
+    if is_brace || is_colon || can_omit {
+        if is_brace || is_colon { consume(stream); }
         let body = if only_expr_wo_brace && !is_brace {
             parse_expr(stream, None)
         } else {
@@ -449,6 +450,8 @@ fn parse_defn(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
     match stream.front() {
         Some(Tokens::Let) => parse_let(consume(stream)),
         Some(Tokens::Fun) => parse_func(consume(stream)),
+        Some(Tokens::For) => parse_for_loop(consume(stream)),
+        Some(Tokens::While) => parse_while_loop(consume(stream)),
         _ => Err("Not a defn".to_owned()),
     }
 }
@@ -701,7 +704,7 @@ fn parse_for_loop(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
         } else { None };
 
         let body = 
-        match parse_colon_brace_block(stream, false) {
+        match parse_colon_brace_block(stream, false, false) {
             e @ Err(_) => return e,
             Ok(ast) => Box::new(ast),
         };
@@ -716,7 +719,7 @@ fn parse_for_loop(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
 
 fn parse_while_loop(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
     if let Ok(expr) = parse_expr(stream, None) {
-        match parse_colon_brace_block(stream, false) {
+        match parse_colon_brace_block(stream, false, false) {
             Ok(body) => Ok(Ast::While(Box::new(expr), Box::new(body))),
             e => e,
         }

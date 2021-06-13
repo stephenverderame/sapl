@@ -256,13 +256,12 @@ mod tests {
             else if 40 > 300:
                 0
             else if 10 + '' == '10':
-                if 'cat' != true:
-                    if 'apple' > 'banana' {
+                if 'cat' != true {
+                    if 'apple' < 'banana':
                         (10 + 3) ** 4 % 19
-                    }
-                else 
+                } else 
                     (10 + 4) ** 3 % 17
-        "#, Values::Int(7));
+        "#, Values::Int(4));
 
         assert_val_eq(r#"
         let x = 'app';
@@ -691,7 +690,7 @@ mod tests {
     fn try_test() {
         assert_val_eq(r#"
         fun idiv x y{
-            try:
+            try
                 x / y
             catch _:
                 0
@@ -701,7 +700,7 @@ mod tests {
         "#, Values::Int(10));
 
         assert_val_eq(r#"
-        try:
+        try
             let name = 'Freya' + 10 ** 3;
             let town = 'Smithtown';
             throw name + ' from ' + town
@@ -714,7 +713,7 @@ mod tests {
     fn typeof_test() {
         assert_val_eq(r#"
         typeof((4, 5, 3))
-        "#, Values::Str("tuple3".to_owned()));
+        "#, Values::Str("tuple_3".to_owned()));
 
         assert_val_eq(r#"
         typeof(5?)
@@ -766,7 +765,7 @@ mod tests {
         "#, Values::Str("Joe".to_owned()));
 
         assert_val_eq(r#"
-        fun tie x y -> tuple2 {
+        fun tie x y -> tuple_2 {
             return (x, y)
         }
 
