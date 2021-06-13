@@ -6,12 +6,13 @@ use std::collections::HashMap;
 pub enum Op {
     Plus, Mult, Div, Mod, Sub, Exp,
     Land, Lor, And, Or, Lt, Gt, Eq,
-    Neq, Leq, Geq, Range,
+    Neq, Leq, Geq, Range, Not,
     Pipeline, Dot, Neg, Concat,
     AsBool,
     Index,
     Return, Throw,
     Assign,
+    Ref,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -161,7 +162,9 @@ fn parse_bop(left: Ast, parent: Option<i32>, stream: &mut VecDeque<Tokens>)
     -> Result<Ast, String> 
 {
     let mut res : Result<Ast, String> = Ok(left);
-    while let Some(op) = tok_to_op(stream.front().unwrap_or(&Tokens::RParen)) {
+    while let Some(op) = 
+        tok_to_op(stream.front().unwrap_or(&Tokens::RParen), false) 
+    {
         if let Err(_) = res { break; }
         if let Some(p) = parent {
             if p >= precedence(op) {
@@ -202,16 +205,17 @@ fn parse_bop_right(stream: &mut VecDeque<Tokens>, cur_pres: i32) -> Result<Ast, 
 /// Larger number indicates higher priority
 fn precedence(op: Op) -> i32 {
     match op {
-        Op::Dot => 12,
-        Op::Index | Op::Neg | Op::AsBool => 11,
+        Op::Dot => 13,
+        Op::Ref => 12,
+        Op::Index | Op::Neg | Op::AsBool | Op::Not => 11,
         Op::Exp => 10,
         Op::Mult | Op::Mod | Op::Div | Op::And => 9,
         Op::Plus | Op::Sub | Op::Or => 8,
         Op::Eq | Op::Neq | Op::Leq | Op::Geq | Op::Lt | Op::Gt => 7,
         Op::Land => 6,
-        Op::Lor => 5,
-        Op::Pipeline => 4,
-        Op::Range | Op::Concat => 3,
+        Op::Lor => 5,       
+        Op::Range | Op::Concat => 4,
+        Op::Pipeline => 3,
         Op::Return | Op::Throw => 2,
         Op::Assign => 1,
     }
@@ -219,30 +223,34 @@ fn precedence(op: Op) -> i32 {
 
 /// Converts `tok` to an operator
 /// Requires `tok` is a bop token
-fn tok_to_op(tok: &Tokens) -> Option<Op> {
-    match *tok {
-        Tokens::OpMult => Some(Op::Mult),
-        Tokens::OpDiv => Some(Op::Div),
-        Tokens::OpPlus => Some(Op::Plus),
-        Tokens::OpMod => Some(Op::Mod),
-        Tokens::OpMinus => Some(Op::Sub),
-        Tokens::OpExp => Some(Op::Exp),
-        Tokens::OpLor => Some(Op::Lor),
-        Tokens::OpLand => Some(Op::Land),
-        Tokens::OpGeq => Some(Op::Geq),
-        Tokens::OpGt => Some(Op::Gt),
-        Tokens::OpLt => Some(Op::Lt),
-        Tokens::OpLeq => Some(Op::Leq),
-        Tokens::OpEq => Some(Op::Eq),
-        Tokens::OpNeq => Some(Op::Neq),
-        Tokens::OpPipeline => Some(Op::Pipeline),
-        Tokens::OpDot => Some(Op::Dot),
-        Tokens::OpNegate => Some(Op::Neg),
-        Tokens::OpRange => Some(Op::Range),
-        Tokens::Return => Some(Op::Return),
-        Tokens::OpConcat => Some(Op::Concat),
-        Tokens::Throw => Some(Op::Throw),
-        Tokens::OpAssign => Some(Op::Assign),
+/// `uop` - true when the operator is seen as a uop
+fn tok_to_op(tok: &Tokens, uop: bool) -> Option<Op> {
+    match (tok, uop) {
+        (&Tokens::OpMult, _) => Some(Op::Mult),
+        (&Tokens::OpDiv, _) => Some(Op::Div),
+        (&Tokens::OpPlus, _) => Some(Op::Plus),
+        (&Tokens::OpMod, _) => Some(Op::Mod),
+        (&Tokens::OpMinus, false) => Some(Op::Sub),
+        (&Tokens::OpMinus, true) => Some(Op::Neg),
+        (&Tokens::OpExp, _) => Some(Op::Exp),
+        (&Tokens::OpLor, _) => Some(Op::Lor),
+        (&Tokens::OpLand, _) => Some(Op::Land),
+        (&Tokens::OpAnd, false) => Some(Op::And),
+        (&Tokens::OpAnd, true) => Some(Op::Ref),
+        (&Tokens::OpGeq, _) => Some(Op::Geq),
+        (&Tokens::OpGt, _) => Some(Op::Gt),
+        (&Tokens::OpLt, _) => Some(Op::Lt),
+        (&Tokens::OpLeq, _) => Some(Op::Leq),
+        (&Tokens::OpEq, _) => Some(Op::Eq),
+        (&Tokens::OpNeq, _) => Some(Op::Neq),
+        (&Tokens::OpPipeline, _) => Some(Op::Pipeline),
+        (&Tokens::OpDot, _) => Some(Op::Dot),
+        (&Tokens::OpNegate, _) => Some(Op::Not),
+        (&Tokens::OpRange, _) => Some(Op::Range),
+        (&Tokens::Return, _) => Some(Op::Return),
+        (&Tokens::OpConcat, _) => Some(Op::Concat),
+        (&Tokens::Throw, _) => Some(Op::Throw),
+        (&Tokens::OpAssign, _) => Some(Op::Assign),
         _ => None,
     }
 }
@@ -304,10 +312,10 @@ fn parse_paren_expr(stream: &mut VecDeque<Tokens>) -> Result<Ast, String>
 }
 
 fn parse_try(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
-    let body = parse_colon_brace_block(stream, false, true);
+    let body = parse_block(stream, false, true);
     if Some(Tokens::Catch) == stream.pop_front() {
         if let Some(Tokens::Name(x)) = stream.pop_front() {
-            let catch = parse_colon_brace_block(stream, false, false);
+            let catch = parse_block(stream, true, false);
             match (body, catch) {
                 (Ok(body), Ok(catch)) => Ok(Ast::Try(Box::new(body), x, Box::new(catch))),
                 (e @ Err(_), Ok(_)) | (Ok(_), e @ Err(_)) => e,
@@ -325,8 +333,9 @@ fn parse_try(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
 /// `only_expr_wo_brace` - set to true if the block can only contain an expression if
 /// there are no braces
 /// `can_omit` - set to true if the block can omit : or {}
-fn parse_colon_brace_block(stream: &mut VecDeque<Tokens>, only_expr_wo_brace: bool, can_omit : bool) 
-    -> Result<Ast, String> 
+/// Requires the block begins with the first token in `stream`.
+fn parse_block(stream: &mut VecDeque<Tokens>, 
+    only_expr_wo_brace: bool, can_omit : bool) -> Result<Ast, String> 
 {
     let is_brace = stream.front() == Some(&Tokens::LBrace);
     let is_colon = stream.front() == Some(&Tokens::Colon);
@@ -370,13 +379,23 @@ fn parse_tuple(first: Ast, stream: &mut VecDeque<Tokens>) -> Result<Ast, String>
 /// Requires the `If` token has already been consumed
 fn parse_conditional(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
     let guard = parse_expr(stream, None);
-    match (guard, stream.pop_front()) {
-        (Ok(guard), Some(tok @ Tokens::Colon)) |
-        (Ok(guard), Some(tok @ Tokens::LBrace)) => 
-            parse_if_body(guard, tok, stream),
-        (Ok(_), t) => Err(format!("Got {:?} instead of colon or bracket after if", t)),
-        (e @ Err(_), _) => e,
-    } 
+    match (guard, parse_block(stream, false, false)) {
+        (Ok(guard), Ok(body)) => {
+            println!("If got guard {:?} and body {:?}", guard, body);
+            let gd = Box::new(guard);
+            let bd = Box::new(body);
+            if stream.front() == Some(&Tokens::Else) {
+                match parse_block(consume(stream), true, true) {
+                    Ok(else_blk) => Ok(Ast::If(gd, bd, Some(Box::new(else_blk)))),
+                    e => e,
+                }
+            } else {
+                Ok(Ast::If(gd, bd, None))
+            }
+        },
+        (e @ Err(_), Ok(_)) | (Ok(_), e @ Err(_)) => e,
+        (e, _) => e,
+    }
 }
 
 /// Parses the next token on the stream as a name
@@ -405,41 +424,6 @@ fn parse_fn_apply(func: String, stream: &mut VecDeque<Tokens>) -> Result<Ast, St
         Err("Missing closing parenthesis in function app".to_owned())
     } else {
         Ok(Ast::FnApply(func, args))
-    }
-}
-
-/// Parses the body of an if expression
-/// `guard` is the guard expression
-/// `opening` is the opening token of the body. Either `:` or `{`
-/// `stream` is the token stream
-fn parse_if_body(guard: Ast, opening: Tokens, stream: &mut VecDeque<Tokens>) 
-    -> Result<Ast, String> 
-{
-    let body = parse(stream);
-    if opening == Tokens::LBrace 
-        && stream.pop_front() != Some(Tokens::RBrace) 
-    {
-        return Err("Missing closing } after bracketed if".to_owned());
-    }
-    if body.is_err() { return body; }
-    let body = body.unwrap();
-    match stream.front() {
-        Some(Tokens::Else) => {
-            stream.pop_front();
-            let braces = if let Some(Tokens::LBrace) = stream.front() { 
-                stream.pop_front(); 
-                true
-            } else { false };
-            let other = parse_expr(stream, None);
-            if braces && stream.pop_front() != Some(Tokens::RBrace) {
-                return Err("Missing } after else".to_owned());
-            }
-            if other.is_ok() {
-                Ok(Ast::If(Box::new(guard), Box::new(body), 
-                    Some(Box::new(other.unwrap()))))
-            } else { other }
-        },
-        _ => Ok(Ast::If(Box::new(guard), Box::new(body), None)),
     }
 }
 
@@ -502,7 +486,7 @@ fn parse_func(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
     match stream.pop_front() {
         Some(Tokens::Name(fn_name)) => {
             let params = get_function_params(stream);
-            match get_function_body(stream, true) {
+            match get_function_body(stream) {
                 (Ok(body), post) => Ok(Ast::Func(fn_name, params, Box::new(body), post)),
                 (e, _) => e,
             }
@@ -512,7 +496,7 @@ fn parse_func(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
             if stream.pop_front() != Some(Tokens::RParen) {
                 Err("Lambda missing closing parenthesis".to_owned())
             } else {
-                match get_function_body(stream, false) {
+                match get_function_body(stream) {
                     (Ok(body), _) => Ok(Ast::Lambda(params, Box::new(body))),
                     (e, _) => e,
                 }
@@ -538,8 +522,7 @@ fn get_function_params(stream: &mut VecDeque<Tokens>) -> Vec<String> {
 /// `need_brace`: true if the function body must be surrounded by braces
 /// Gets the body, postcondition pair
 /// If there is a postcondition, braces are required
-fn get_function_body(stream: &mut VecDeque<Tokens>, need_brace: bool) 
-    -> (Result<Ast, String>, Option<Box<Ast>>)
+fn get_function_body(stream: &mut VecDeque<Tokens>) -> (Result<Ast, String>, Option<Box<Ast>>)
 {
     let postcondition =
     if Some(&Tokens::Rightarrow) == stream.front() {
@@ -549,17 +532,7 @@ fn get_function_body(stream: &mut VecDeque<Tokens>, need_brace: bool)
             e => return (e, None),
         }
     } else { None };
-    let is_brace = stream.front() == Some(&Tokens::LBrace);
-    if !is_brace && (need_brace || postcondition.is_some()) {
-        return (Err("Missing brace in function body".to_owned()), None);
-    } else if is_brace {
-        consume(stream);
-    }
-    let expr = if !is_brace { parse_expr(stream, None) } else { parse(stream) };
-    if is_brace && Some(Tokens::RBrace) != stream.pop_front() {
-        return (Err("Missing closing brace in function body".to_owned()), None)
-    }
-    (expr, postcondition)
+    (parse_block(stream, true, true), postcondition)
 }
 
 /// Parses a series of tokens within a `[]` as a list
@@ -598,7 +571,8 @@ fn tok_is_post_uop(tok: &Tokens) -> bool {
 fn tok_is_pre_uop(tok: &Tokens) -> bool {
     match *tok {
         Tokens::OpNegate | Tokens::Return 
-        | Tokens::Throw => true,
+        | Tokens::Throw | Tokens::OpAnd |
+        Tokens::OpMinus => true,
         _ => false,
     }
 }
@@ -618,7 +592,7 @@ fn parse_post_uop(left: Ast, stream: &mut VecDeque<Tokens>)
 /// Parses a pre value uop
 /// Requires the uop is the first element in the stream
 fn parse_pre_uop(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
-    let op = tok_to_op(stream.front().unwrap()).unwrap();
+    let op = tok_to_op(stream.front().unwrap(), true).unwrap();
     consume(stream);
     let right = 
     match stream.front() {
@@ -704,7 +678,7 @@ fn parse_for_loop(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
         } else { None };
 
         let body = 
-        match parse_colon_brace_block(stream, false, false) {
+        match parse_block(stream, false, false) {
             e @ Err(_) => return e,
             Ok(ast) => Box::new(ast),
         };
@@ -719,7 +693,7 @@ fn parse_for_loop(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
 
 fn parse_while_loop(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
     if let Ok(expr) = parse_expr(stream, None) {
-        match parse_colon_brace_block(stream, false, false) {
+        match parse_block(stream, false, false) {
             Ok(body) => Ok(Ast::While(Box::new(expr), Box::new(body))),
             e => e,
         }

@@ -19,7 +19,7 @@ pub enum Values {
     Tuple(Vec<Box<Values>>),
     Range(Box<Values>, Box<Values>),
     Map(HashMap<String, Box<Values>>),
-    Placeholder
+    Placeholder,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -108,9 +108,11 @@ fn eval_bop(left: &Ast, op: &Op, right: &Ast, scope: &mut impl Environment) -> R
 /// Evaluates the unary operator `op left`
 fn eval_uop(left: &Ast, op: &Op, scope: &mut impl Environment) -> Res {
     match (eval(left, scope), op) {
-        (Vl(Values::Bool(x)), Op::Neg) => Vl(Values::Bool(!x)),
-        (Vl(Values::Int(x)), Op::Neg) => Vl(Values::Int(-x)),
-        (Vl(Values::Float(x)), Op::Neg) => Vl(Values::Float(-x)),
+        (Vl(Values::Bool(x)), Op::Not) => Vl(Values::Bool(!x)),
+        (Vl(Values::Int(x)), Op::Neg) | 
+        (Vl(Values::Int(x)), Op::Not) => Vl(Values::Int(-x)),
+        (Vl(Values::Float(x)), Op::Neg) | 
+        (Vl(Values::Float(x)), Op::Not) => Vl(Values::Float(-x)),
         (Vl(v), Op::Neg) => str_exn(&format!("{:?} cannot be negated", v)[..]),
         (v, Op::AsBool) => match v {
             Vl(_) | Res::Ret(_) => Vl(Values::Bool(true)),
@@ -122,6 +124,7 @@ fn eval_uop(left: &Ast, op: &Op, scope: &mut impl Environment) -> Res {
         (e, _) => e,
     }
 }
+
 
 /// Performs the dot operator `.` on `left.right`
 fn perform_dot_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> Res {

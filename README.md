@@ -152,17 +152,20 @@ The following are pretty standard operators that work as you'd expect:
 We haven't talked about all of the operators yet, but here is the list. 
 
 1. `.` 
-2. `[]`, `!`, `?`
-3. `**`,
-4. `*`, `%`, `/`, `&` (bitwise and)
-5. `+`, `-`, `|` (bitwise or)
-6. `==`, `!=`, `>`, `<`, `<=`, `>=`
-7. `&&`
-8. `||`,
-9. `|>`
+2. `&`, `&&` (reference and mutable reference)
+3. `[]`, `!`, `?`, `-` (unary minus)
+4. `**`,
+5. `*`, `%`, `/`, `&` (bitwise and)
+6. `+`, `-`, `|` (bitwise or)
+7. `==`, `!=`, `>`, `<`, `<=`, `>=`
+8. `&&`
+9. `||`,
 10. `..`, `@`
-11. `return`, `throw`
-12. `=`
+11. `|>`
+12. `return`, `throw`
+13. `=`
+
+Operators on the same precedence level have left association. This means that pre-expression unary operations take precedence over post-expression unary operators
 
 ### Examples
 
@@ -223,7 +226,7 @@ The result is "Jill"
 
 In SAPL, blocks can either be denoted with braces or a colon
 ```BNF
-if ::=  
+<if> ::=  
     if <expr1>: <code> else <expr>    |
 
     if <expr1>:
@@ -240,6 +243,8 @@ if ::=
 ```
 
 An if block will convert any non-bool value to a boolean in the guard expression during evaluation. No other conversion is done implicitly. An if block without an else where the guard is not satisfied produces the `unit` value. If blocks can also be nested within an else branch to create an `else if`. However, the parser reads this as a whole new `if` block within the else branch of an outer if.
+
+Also take note that without braces, the else branch **may only** contain an *expression*, while with braces present it can contain any *code*.
 
 Examples:
 
@@ -289,17 +294,44 @@ let max = if x < y: y else x
 ```
 
 #### *Design Decision*:
-I wanted if statements to be able to be neatly inlined (like the last example). Thus I created the option to use `:` or braces. This can lead to some confusion of where to use braces or a colon. My advice is use a colon if the block **only** contains a *single* expression or definition and there is no nesting. Use braces otherwise. Traditionally, an if block within a sequence would need braces on the else block because there would be no way to know if the semicolon after the last expression in the `else` denoted a sequence for the `else` block or the outer sequence. I say traditionally because that was before *sequence elision*
+I wanted if statements to be able to be neatly inlined (like the last example). Thus I created the option to use `:` or braces. This can lead to some confusion of where to use braces or a colon. My advice is use a colon if the block **only** contains a *single* expression or definition and there is no nesting. Use braces otherwise. More formally, braces are required when there is no other terminal token, and the block contains more than a single expression. For example the `else` branch of an `if` may only contain an expression unless braces are used. Consider the following:
+
+```Javascript
+let favorite_color = if age <= 12: 'red' else 'sky blue';
+let favorite_food = if age < 10: 'spaghetti' else 'Risotto alla Milanese';
+//...
+```
+
+If the `else` branch could contain more than just a single expression without braces, then there would be no way to tell if you mean what was written above or the following:
+
+```Javascript
+let favorite_color = 
+    if age <= 12:
+        'red'
+    else
+        'sky blue';
+        let favorite_food =
+            if age < 10:
+                'spaghetti'
+            else
+                'Risotto alla Milanese'
+//...
+```
+Take `age = 18`, then the first code snippet would bind `favorite_color = 'sky blue'` and `favorite_food = 'Risotto alla Milanese'` while the second one would bind `favorite_color = unit`. `favorite_food` would only be bound in the scope of the `else` branch and thus be popped off the stack by the "..."
+
+Moreover, an `if` branch can only contain a single expression if `:` is used without an `else`. This is because the `else` serves as a sentinal symbol for the `if` block, and without it there would be problems similar to the one demonstrated above. Once again, my advice is to use braces unless you are inlining the expression.
+
+### Try
 
 
 
 
 ```BNF
-try ::=
+<try> ::=
     try
         <code1>
     catch <name>:
-        <code> 
+        <expr> 
     
     | 
 
@@ -314,9 +346,9 @@ try ::=
     try:
         <code1>
     catch <name>:
-        <code2>
+        <expr>
 ```
-Once again, try/catch blocks can use braces or a colon (or neither for the try)
+Once again, try/catch blocks can use braces or a colon (or neither for the try). A `try` block **must** always be followed by a `catch` block, therefore, there is never a time when you need braces for the try block since `catch` will serve as a sentinel token. However, like the `else` block, a `catch` block must either have braces or contain only a single expression.
 
 `<name>` is the name of the variable that is bound to the exception returned in the catch block if an exception is caught. If no exception is throw, the value of `<code1>` is returned. Otherwise, the thrown exception is bound to `<name>` and `<code>` is evaluated and the result (which can be another exception) is returned
 
@@ -384,9 +416,9 @@ school
 I didn't like the look of a semicolon following a brace so I decided to create a few exceptions where the sequence operator can be elided. However, it's important to know that these exceptions are part of a sequence even though they don't require a semicolon. Putting a semicolon would not be wrong however.
 
 Sequence elision occurs
-* After an if block
-* Try block
-* For and While loops
+* After an `if` block
+* After a `try` block
+* Following `for` and `while` loops
 
 An if or try block within a `let` definition would still require a semicolon because let definitions are not allowed to elide the sequence operator.
 
@@ -576,7 +608,7 @@ fun summation start end {
 summation(0, 100) //5050
 ```
 
-However, since lambdas are unnamed, recursive lambdas would refer to themselves with the `this` keyword.
+However, since lambdas are unnamed, recursive lambdas would refer to themselves with the `this` keyword. Technically speaking, `this` is not a keyword but rather a name that is captured in the lambda's closure which refers to itself.
 
 ```OCaml
 let countdown = fun (x) {
