@@ -1,12 +1,14 @@
 use crate::evaluator::Values;
 use std::collections::HashMap;
 use std::collections::LinkedList;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 
 
 pub trait Environment {
     /// Gets a value stored in this environment with the name `x`
-    fn find(&self, name: &str) -> Result<&Values, String>;
+    fn find(&self, name: &str) -> Option<(Rc<RefCell<Values>>, bool)>;
 
     /// Adds a new value into the environment with the name `name` and 
     /// mutability `mutable`
@@ -35,15 +37,15 @@ pub trait Environment {
 /// An environment which owns its own data
 #[derive(Clone, PartialEq, Debug)]
 pub struct Scope {
-    names: LinkedList<HashMap<String, (Values, bool)>>,
+    names: LinkedList<HashMap<String, (Rc<RefCell<Values>>, bool)>>,
 }
 
 impl Scope {
     pub fn new() -> Scope {
         Scope {
             names: {
-                let mut ll = LinkedList::<HashMap::<String, (Values, bool)>>::new();
-                ll.push_back(HashMap::<String, (Values, bool)>::new());
+                let mut ll = LinkedList::<HashMap::<String, (Rc<RefCell<Values>>, bool)>>::new();
+                ll.push_back(HashMap::<String, (Rc<RefCell<Values>>, bool)>::new());
                 ll
             },
         }
@@ -58,19 +60,20 @@ impl Scope {
 }
 
 impl Environment for Scope {
-    fn find(&self, name: &str) -> Result<&Values, String> {
+    fn find(&self, name: &str) -> Option<(Rc<RefCell<Values>>, bool)> {
         for map in &self.names {
-            if let Some((val, _)) = map.get(name) {
-                return Ok(val);
+            if let Some((val, mtble)) = map.get(name) {
+                return Some((val.clone(), *mtble));
             }
         }
-        Err(format!("Unknown name {}", name))
+        None
         
     }
 
     fn add(&mut self, name: String, val: Values, mutable: bool) {
         if name != "_" {
-            self.names.front_mut().unwrap().insert(name, (val, mutable));
+            self.names.front_mut().unwrap()
+                .insert(name, (Rc::new(RefCell::new(val)), mutable));
         }
     }
 
@@ -78,7 +81,7 @@ impl Environment for Scope {
         for map in &mut self.names {
             match map.get_mut(name) {
                 Some((v, true)) => {
-                    *v = val;
+                    *v = Rc::new(RefCell::new(val));
                     return true;
                 },
                 Some((_, false)) => return false,
@@ -90,7 +93,7 @@ impl Environment for Scope {
     }
 
     fn new_scope(&mut self) {
-        self.names.push_front(HashMap::<String, (Values, bool)>::new());
+        self.names.push_front(HashMap::<String, (Rc<RefCell<Values>>, bool)>::new());
     }
 
     fn pop_scope(&mut self) {
@@ -135,7 +138,7 @@ impl<'a> Drop for ScopeProxy<'a> {
 }
 
 impl<'a> Environment for ScopeProxy<'a> {
-    fn find(&self, name: &str) -> Result<&Values, String> {
+    fn find(&self, name: &str) -> Option<(Rc<RefCell<Values>>, bool)> {
         self.scope.find(name)
     }
     fn add(&mut self, name: String, val: Values, mutable: bool) {
@@ -174,9 +177,9 @@ impl<'a> ImmuScope<'a> {
 }
 
 impl<'a> Environment for ImmuScope<'a> {
-    fn find(&self, name: &str) -> Result<&Values, String> {
-        if let Ok(res) = self.children.find(name) {
-            Ok(res)
+    fn find(&self, name: &str) -> Option<(Rc<RefCell<Values>>, bool)> {
+        if let res @ Some(_) = self.children.find(name) {
+            res
         } else {
             self.parent.find(name)
         }

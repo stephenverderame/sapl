@@ -20,6 +20,7 @@ pub enum Values {
     Range(Box<Values>, Box<Values>),
     Map(HashMap<String, Box<Values>>),
     Placeholder,
+    Ref(Rc<RefCell<Values>>, bool),
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -51,8 +52,8 @@ fn eval(ast: &Ast, scope: &mut impl Environment) -> Res {
         Ast::VStr(x) => Vl(Values::Str(x.clone())),
         Ast::VBool(x) => Vl(Values::Bool(*x)),
         Ast::Name(x) => match scope.find(x) {
-            Ok(val) => Vl(val.clone()),
-            Err(e) => Bad(e),
+            Some((val, _)) => Vl(val.borrow().clone()),
+            _ => Bad(format!("Unknown name {}", x)),
         },
         Ast::Bop(left, op, right) => eval_bop(&*left, op, &*right, scope),
         Ast::If(guard, body, other) => eval_if(&*guard, &*body, other, scope),
@@ -64,8 +65,8 @@ fn eval(ast: &Ast, scope: &mut impl Environment) -> Res {
         Ast::FnApply(name, args) if is_rust_func(&name[..]) => 
             eval_rust_func(&name[..], args, scope),
         Ast::FnApply(name, args) => match scope.find(name) {
-            Ok(val) => eval_fn_app(val, args, &mut ImmuScope::from(scope)),
-            Err(e) => Bad(e),
+            Some((val, _)) => eval_fn_app(&val.borrow(), args, &mut ImmuScope::from(scope)),
+            _ => Bad(format!("{} is not a name", name)),
         },
         Ast::Array(elems) => eval_arr(elems, scope, false),
         Ast::Uop(ast, op) => eval_uop(ast, op, scope),
@@ -85,6 +86,8 @@ fn eval_bop(left: &Ast, op: &Op, right: &Ast, scope: &mut impl Environment) -> R
         return perform_dot_op(left, right, scope);
     } else if op == &Op::Assign {
         return perform_assign_op(left, right, scope);
+    } else if op == &Op::Update {
+        return perform_update_op(left, right, scope);
     }
     let left = eval(left, scope);
     match (left, op) {
@@ -107,12 +110,14 @@ fn eval_bop(left: &Ast, op: &Op, right: &Ast, scope: &mut impl Environment) -> R
 
 /// Evaluates the unary operator `op left`
 fn eval_uop(left: &Ast, op: &Op, scope: &mut impl Environment) -> Res {
+    if op == &Op::Ref || op == &Op::MutRef { return eval_ref(left, op, scope); }
     match (eval(left, scope), op) {
         (Vl(Values::Bool(x)), Op::Not) => Vl(Values::Bool(!x)),
         (Vl(Values::Int(x)), Op::Neg) | 
         (Vl(Values::Int(x)), Op::Not) => Vl(Values::Int(-x)),
         (Vl(Values::Float(x)), Op::Neg) | 
         (Vl(Values::Float(x)), Op::Not) => Vl(Values::Float(-x)),
+        (Vl(Values::Ref(x, _)), Op::Deref) => Vl(x.borrow().clone()),
         (Vl(v), Op::Neg) => str_exn(&format!("{:?} cannot be negated", v)[..]),
         (v, Op::AsBool) => match v {
             Vl(_) | Res::Ret(_) => Vl(Values::Bool(true)),
@@ -125,21 +130,58 @@ fn eval_uop(left: &Ast, op: &Op, scope: &mut impl Environment) -> Res {
     }
 }
 
+fn eval_ref(left: &Ast, op: &Op, scope: &mut impl Environment) -> Res {
+    let mutable = op != &Op::Ref;
+    match left {
+        Ast::Name(x) => {
+            if let Some((ptr, mtble)) = scope.find(&x[..]) {
+                if !mutable || mutable && mtble {
+                    Vl(Values::Ref(ptr.clone(), mutable))
+                } else {
+                    str_exn("Cannot get mutable reference to immutable value")
+                }
+            } else { Bad(format!("{} is not a name", x)) }
+        },
+        _ => {
+            match eval(left, scope) {
+                Vl(Values::Ref(ptr, mt)) if !mutable || mt && mutable => {
+                    Vl(Values::Ref(ptr.clone(), mutable))
+                },
+                Vl(Values::Ref(..)) => str_exn("Mutable/immutable reference mismatch!"),
+                Vl(val) => {
+                    Vl(Values::Ref(Rc::new(RefCell::new(val)), mutable))
+                },
+                e => e,
+            }
+        },
+    }
+}
+
 
 /// Performs the dot operator `.` on `left.right`
 fn perform_dot_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> Res {
     if let Ast::Name(x) = left {
         match scope.find(x) {
-            Ok(v) => do_dot_ref_op(v, right, &mut ImmuScope::from(scope)),
-            Err(e) => return Bad(e),
+            Some((v, _)) => {
+                let mut sub_scope = ImmuScope::from(scope);
+                if let Values::Ref(ptr, _) = &*v.borrow() {
+                    do_dot_ref_op(&ptr.borrow(), right, &mut sub_scope)
+                } else {
+                    do_dot_ref_op(&v.borrow(), right, &mut sub_scope)
+                }
+            },
+            None => return Bad(format!("{} is not a name", x)),
         }
     } else {
         match eval(left, scope) {
+            Vl(Values::Ref(r, _)) => do_dot_ref_op(&r.borrow(), right, scope),
             Vl(v) => do_dot_mv_op(v, right, scope),
             e => return e,
         }
     }
 }
+
+
 
 fn perform_assign_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> Res {
     let rt =
@@ -152,6 +194,34 @@ fn perform_assign_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> R
         match scope.update(&x[..], rt) {
             true => Vl(Values::Unit),
             false => str_exn("Attempt to update a non-existant or immutable variable"),
+        }
+    } else {
+        str_exn("Unimplemented assignment")
+    }
+}
+
+fn perform_update_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> Res {
+    let rt =
+    match eval(right, scope) {
+        Vl(v) => v,
+        e => return e,
+    };
+
+    if let Ast::Name(x) = left {
+        match scope.find(&x[..]) {
+            Some((ptr, _)) => {
+                if let Values::Ref(rf, mtble) = &*ptr.borrow() {
+                    if *mtble {
+                        *(rf.borrow_mut()) = rt;
+                        Vl(Values::Unit)
+                    } else {
+                        str_exn("Cannot update immutable reference")
+                    }
+                } else {
+                    str_exn("Cannot update non-reference")
+                }
+            },
+            None => Bad(format!("Cannot update unbound name {}", x)),
         }
     } else {
         str_exn("Unimplemented assignment")
@@ -534,8 +604,8 @@ fn eval_lambda(params: &Vec<String>, ast: &Ast, scope: &mut impl Environment)
 fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment) {
     match ast {
         Ast::Name(x) => {
-            if let Ok(val) = old_scope.find(x) {
-                scope.add(x.to_string(), val.clone(), false)
+            if let Some((val, mtble)) = old_scope.find(x) {
+                scope.add(x.to_string(), val.borrow().clone(), mtble)
             }
         },
         Ast::If(guard, body, other) => {
@@ -559,13 +629,12 @@ fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment
         Ast::Func(.., ast, condition) => {
             capture_into_scope(&*ast, scope, old_scope);
             if let Some(ast) = condition {
-                println!("Capture condition");
                 capture_into_scope(&*ast, scope, old_scope);
             }
         },
         Ast::FnApply(name, args) => {
-            if let Ok(val) = old_scope.find(name) {
-                scope.add(name.to_string(), val.clone(), false);
+            if let Some((val, mtble)) = old_scope.find(name) {
+                scope.add(name.to_string(), val.borrow().clone(), mtble);
             }
             for expr in args {
                 capture_into_scope(&*expr, scope, old_scope);
@@ -787,6 +856,7 @@ fn type_of(v: &Values) -> String {
         Values::Map(_) => "map".to_owned(),
         Values::Func(..) => "function".to_owned(),
         Values::Placeholder => "partial app placeholder".to_owned(),
+        Values::Ref(..) => "ref".to_owned(),
     }
 }
 

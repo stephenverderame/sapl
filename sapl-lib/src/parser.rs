@@ -11,8 +11,8 @@ pub enum Op {
     AsBool,
     Index,
     Return, Throw,
-    Assign,
-    Ref,
+    Assign, Update,
+    Ref, Deref, MutRef,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -125,7 +125,7 @@ fn tok_is_bop(tok: &Tokens) -> bool {
         | Tokens::OpNeq | Tokens::OpGeq | Tokens::OpGt
         | Tokens::OpPipeline | Tokens::OpDot 
         | Tokens::OpRange | Tokens::OpConcat
-        | Tokens::OpAssign
+        | Tokens::OpAssign | Tokens::Leftarrow
         => true,
         _ => false,
     }
@@ -206,7 +206,7 @@ fn parse_bop_right(stream: &mut VecDeque<Tokens>, cur_pres: i32) -> Result<Ast, 
 fn precedence(op: Op) -> i32 {
     match op {
         Op::Dot => 13,
-        Op::Ref => 12,
+        Op::Ref | Op::Deref | Op::MutRef => 12,
         Op::Index | Op::Neg | Op::AsBool | Op::Not => 11,
         Op::Exp => 10,
         Op::Mult | Op::Mod | Op::Div | Op::And => 9,
@@ -217,7 +217,7 @@ fn precedence(op: Op) -> i32 {
         Op::Range | Op::Concat => 4,
         Op::Pipeline => 3,
         Op::Return | Op::Throw => 2,
-        Op::Assign => 1,
+        Op::Assign | Op::Update => 1,
     }
 }
 
@@ -226,7 +226,8 @@ fn precedence(op: Op) -> i32 {
 /// `uop` - true when the operator is seen as a uop
 fn tok_to_op(tok: &Tokens, uop: bool) -> Option<Op> {
     match (tok, uop) {
-        (&Tokens::OpMult, _) => Some(Op::Mult),
+        (&Tokens::OpMult, false) => Some(Op::Mult),
+        (&Tokens::OpMult, true) => Some(Op::Deref),
         (&Tokens::OpDiv, _) => Some(Op::Div),
         (&Tokens::OpPlus, _) => Some(Op::Plus),
         (&Tokens::OpMod, _) => Some(Op::Mod),
@@ -234,7 +235,8 @@ fn tok_to_op(tok: &Tokens, uop: bool) -> Option<Op> {
         (&Tokens::OpMinus, true) => Some(Op::Neg),
         (&Tokens::OpExp, _) => Some(Op::Exp),
         (&Tokens::OpLor, _) => Some(Op::Lor),
-        (&Tokens::OpLand, _) => Some(Op::Land),
+        (&Tokens::OpLand, false) => Some(Op::Land),
+        (&Tokens::OpLand, true) => Some(Op::MutRef),
         (&Tokens::OpAnd, false) => Some(Op::And),
         (&Tokens::OpAnd, true) => Some(Op::Ref),
         (&Tokens::OpGeq, _) => Some(Op::Geq),
@@ -251,6 +253,7 @@ fn tok_to_op(tok: &Tokens, uop: bool) -> Option<Op> {
         (&Tokens::OpConcat, _) => Some(Op::Concat),
         (&Tokens::Throw, _) => Some(Op::Throw),
         (&Tokens::OpAssign, _) => Some(Op::Assign),
+        (&Tokens::Leftarrow, _) => Some(Op::Update),
         _ => None,
     }
 }
@@ -572,7 +575,8 @@ fn tok_is_pre_uop(tok: &Tokens) -> bool {
     match *tok {
         Tokens::OpNegate | Tokens::Return 
         | Tokens::Throw | Tokens::OpAnd |
-        Tokens::OpMinus => true,
+        Tokens::OpMinus | Tokens::OpMult 
+        | Tokens::OpLand => true,
         _ => false,
     }
 }
@@ -593,12 +597,14 @@ fn parse_post_uop(left: Ast, stream: &mut VecDeque<Tokens>)
 /// Requires the uop is the first element in the stream
 fn parse_pre_uop(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
     let op = tok_to_op(stream.front().unwrap(), true).unwrap();
+    let prec = precedence(op);
+    println!("Uop {:?}", op);
     consume(stream);
     let right = 
     match stream.front() {
-        Some(Tokens::LParen) | Some(Tokens::Name(_)) => parse_expr(stream, None),
-        Some(x) if tok_is_pre_uop(x) => parse_expr(stream, None),
-        Some(x) if tok_is_val(x) => parse_expr(stream, None),
+        Some(Tokens::LParen) | Some(Tokens::Name(_)) => parse_expr(stream, Some(prec)),
+        Some(x) if tok_is_pre_uop(x) => parse_expr(stream, Some(prec)),
+        Some(x) if tok_is_val(x) => parse_expr(stream, Some(prec)),
         x => return Err(format!("Unexpected {:?} after Uop", x)),
     };
     match right {

@@ -20,6 +20,7 @@ pub enum Tokens {
     Fun, Comma,
     Return, Throw, Try, Catch,
     Rightarrow, Var, While,
+    Leftarrow,
 }
 
 /// Converts an input stream into a deque of tokens
@@ -340,6 +341,7 @@ impl TokenizerFSM {
             ".." => Some(Tokens::OpRange),
             "@" => Some(Tokens::OpConcat),
             "->" => Some(Tokens::Rightarrow),
+            "<-" => Some(Tokens::Leftarrow),
             _ => panic!("'{}' is not a recognized operator", self.input),
         }
     }

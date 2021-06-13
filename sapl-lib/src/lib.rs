@@ -870,4 +870,41 @@ mod tests {
         "#, Values::Int(100));
 
     }
+
+    #[test]
+    fn ref_tests() {
+        assert_parse_str_eq("*x + 20", Ast::Bop(
+            Box::new(Ast::Uop(Box::new(Ast::Name("x".to_owned())), Op::Deref)),
+            Op::Plus,
+            Box::new(Ast::VInt(20))
+        ));
+
+        assert_val_eq(r#"
+        let x = &100;
+        *x + 20
+        "#, Values::Int(120));
+
+        assert_val_eq(r#"
+        let things = ['Keyboard', 'Mouse', 'Cable', 'Calculator', 'USB'];
+        let t2 = &things;
+        t2.size()
+        "#, Values::Int(5));
+
+        assert_val_eq(r#"
+        let var name = 'SEV';
+        let name2 = &&name;
+        name2 <- 'SC';
+        name
+        "#, Values::Str("SC".to_owned()));
+
+        assert_val_eq(r#"
+        fun mut_count x {
+            for i in 1..11:
+                x <- *x * i
+        }
+        let var counter = 1;
+        mut_count(&&counter);
+        counter
+        "#, Values::Int(3628800));
+    }
 }
