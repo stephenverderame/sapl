@@ -533,11 +533,6 @@ mod tests {
         [10, 30, 'hello'] == [10, 30, "hgllo"]
         "#, Values::Bool(false));
 
-        /*let toks = lexer::tokenize("lst[-1 + 1]".as_bytes());
-        assert_toks_eq(&toks, vec![Tokens::Name("lst".to_owned()), Tokens::LBracket,
-            Tokens::Integer(-1), Tokens::OpPlus, Tokens::Integer(1),
-            Tokens::RBracket]);*/
-
         assert_val_eq(r#"
         let wd = [10, 30, 'hello'][2];
         let lst = [3.14, 6.28, 2.73];
@@ -547,7 +542,8 @@ mod tests {
         assert_val_eq(r#"
         let names = ['Diana', 'Lexi', 'Brady', 'Andrew', 'Martin'];
         let names = names + ['Angelina', 'Garcia'];
-        names[2..6] == ['Brady', 'Andrew', 'Martin', 'Angelina']
+        names[2..6] == ['Brady', 'Andrew', 'Martin', 'Angelina'] &&
+        (names @ 'Brandy')[7..3] == ['Brandy', 'Garcia', 'Angelina', 'Martin']
         "#, Values::Bool(true));
     }
 
@@ -831,12 +827,12 @@ mod tests {
     fn for_test() {
         assert_val_eq(r#"
         let var count = 0;
-        let rng = 0 .. 0 - 100;
+        let rng = 0 .. -100;
         for i in rng if i % 2 == 0 {
             count = count - i
         }
         count
-        "#, Values::Int(2550));
+        "#, Values::Int(2450));
 
         assert_val_eq(r#"
         let var result = '';
@@ -884,11 +880,11 @@ mod tests {
         *x + 20
         "#, Values::Int(120));
 
-        assert_val_eq(r#"
+       assert_val_eq(r#"
         let things = ['Keyboard', 'Mouse', 'Cable', 'Calculator', 'USB'];
         let t2 = &things;
         t2.size()
-        "#, Values::Int(5));
+        "#, Values::Int(5)); 
 
         assert_val_eq(r#"
         let var name = 'SEV';
@@ -906,5 +902,32 @@ mod tests {
         mut_count(&&counter);
         counter
         "#, Values::Int(3628800));
+
+        assert_eval_eq(r#"let var n = 1; let p = &&n; p = 3"#, 
+            Res::Exn(Values::Str("Attempt to update a non-existant or immutable variable".to_owned())));
+
+        assert_eval_eq(r#"let var n = 1; let p = &n; p <- 3"#, 
+            Res::Exn(Values::Str("Cannot update immutable reference".to_owned())));
+
+        assert_val_eq(r#"
+        let var lst = [];
+        lst.push_back(10, 20, 'Hello');
+        let arr = &&lst;
+        arr.push_back(3.14);
+        lst
+        "#, 
+        Values::Array(vec![Box::new(Values::Int(10)), 
+            Box::new(Values::Int(20)), 
+            Box::new(Values::Str("Hello".to_owned())),
+            Box::new(Values::Float(3.14))]));
+    }
+
+    #[test]
+    #[should_panic]
+    fn mut_ref_from_immu(){
+        assert_val_eq(r#"
+        let name = 'DC';
+        let x = &&name
+        "#, Values::Unit);
     }
 }

@@ -82,13 +82,13 @@ fn eval(ast: &Ast, scope: &mut impl Environment) -> Res {
 /// If `op` is a short circuit operator, only evaluates `left` if the short circuit path is taken
 /// Otherwise evaluates both `left` and `right` and then performs the bop between the two values
 fn eval_bop(left: &Ast, op: &Op, right: &Ast, scope: &mut impl Environment) -> Res {
-    if op == &Op::Dot {
-        return perform_dot_op(left, right, scope);
-    } else if op == &Op::Assign {
-        return perform_assign_op(left, right, scope);
-    } else if op == &Op::Update {
-        return perform_update_op(left, right, scope);
-    }
+    match op {
+        &Op::Dot => return perform_dot_op(left, right, scope),
+        &Op::Assign => return perform_assign_op(left, right, scope),
+        &Op::Update => return perform_update_op(left, right, scope),
+        &Op::Index if matches!(left, Ast::Name(_)) => return perform_name_index_op(left, right, scope),
+        _ => (),
+    };
     let left = eval(left, scope);
     match (left, op) {
         (x, Op::Lor) if to_booly(&x) == Ok(true) => Vl(Values::Bool(true)),
@@ -97,7 +97,7 @@ fn eval_bop(left: &Ast, op: &Op, right: &Ast, scope: &mut impl Environment) -> R
             match (eval(right, scope), op) {
                 (Vl(right), op @ Op::Eq) | (Vl(right), op @ Op::Neq) =>
                     perform_eq_test(val, op, right),
-                (Vl(right), Op::Index) => perform_index_op(val, right),
+                (Vl(right), Op::Index) => perform_index_op(&val, right),
                 (Vl(right), Op::Range) => Vl(Values::Range(Box::new(val), Box::new(right))),
                 (Vl(right), Op::Concat) => perform_concat(val, right),
                 (Vl(right), op) => perform_bop(val, op, right),
@@ -159,13 +159,14 @@ fn eval_ref(left: &Ast, op: &Op, scope: &mut impl Environment) -> Res {
 
 
 /// Performs the dot operator `.` on `left.right`
+/// `left` can be a name, reference, named reference, or any other value
 fn perform_dot_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> Res {
     if let Ast::Name(x) = left {
         match scope.find(x) {
-            Some((v, _)) => {
+            Some((v, nm_mut)) => {
                 let mut sub_scope = ImmuScope::from(scope);
-                if let Values::Ref(ptr, _) = &*v.borrow() {
-                    do_dot_ref_op(&ptr.borrow(), right, &mut sub_scope)
+                if nm_mut {
+                    do_dot_mut_ref_op(&mut v.borrow_mut(), right, scope)
                 } else {
                     do_dot_ref_op(&v.borrow(), right, &mut sub_scope)
                 }
@@ -182,7 +183,8 @@ fn perform_dot_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> Res 
 }
 
 
-
+/// Performs the assignment `left = right`.
+/// `left` must be a name
 fn perform_assign_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> Res {
     let rt =
     match eval(right, scope) {
@@ -200,6 +202,7 @@ fn perform_assign_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> R
     }
 }
 
+/// Updates a reference `left <- right`
 fn perform_update_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> Res {
     let rt =
     match eval(right, scope) {
@@ -228,6 +231,67 @@ fn perform_update_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> R
     }
 }
 
+/// Performs the dot operator on a mutable reference
+fn do_dot_mut_ref_op(mut left: &mut Values, right: &Ast, scope: &mut impl Environment) -> Res {
+    println!("Dot mut");
+    match (&mut left, right) {
+        (Values::Array(x),
+            Ast::FnApply(name, args)) if name.eq("push_back") && !args.is_empty() => {
+                for arg in args {
+                    match eval(arg, scope) {
+                        Vl(val) => x.push(Box::new(val)),
+                        e => return e,
+                    }
+                }
+                Vl(Values::Unit)
+        },
+        (Values::Map(mp),
+            Ast::FnApply(name, args)) if name.eq("insert") && !args.is_empty() =>
+                map_insert(mp, args, scope),
+        (Values::Ref(ptr, ptr_mut), rt) => 
+            if *ptr_mut {
+                do_dot_mut_ref_op(&mut ptr.borrow_mut(), rt, scope)
+            } else {
+                do_dot_ref_op(&*ptr.borrow(), rt, scope)
+            },
+        (l, r) => do_dot_ref_op(l, r, scope),
+    }
+}
+
+fn map_insert(map: &mut HashMap<String, Box<Values>>, args: &Vec<Box<Ast>>, 
+    scope: &mut impl Environment) -> Res 
+{
+    if args.len() == 1 {
+        match eval(&*args[0], scope) {
+            Vl(Values::Tuple(mut x)) if x.len() == 2 => {
+                match (*x.swap_remove(0), *x.pop().unwrap()) {
+                    (Values::Str(x), val) => {
+                        map.insert(x, Box::new(val));
+                        Vl(Values::Unit)
+                    },
+                    _ => str_exn("Inserting tuple must be a string value pair"),
+                }
+            },
+            Vl(_) => str_exn("Invalid argument to map insert"),
+            e => e,
+        }
+    }
+    else if args.len() == 2 {
+        match (eval(&*args[0], scope), eval(&*args[1], scope)) {
+            (Vl(Values::Str(key)), Vl(val)) => {
+                map.insert(key, Box::new(val));
+                Vl(Values::Unit)
+            },
+            (Vl(_), _) => str_exn("Can only insert kv pairs into a map"),
+            (e, _) => e,
+
+        }
+    } else {
+        str_exn("Must insert a key/value pair!")
+    }
+}
+
+
 /// Performs a dot operation on a value
 fn do_dot_ref_op(left: &Values, right: &Ast, scope: &mut impl Environment) 
     -> Res 
@@ -252,6 +316,12 @@ fn do_dot_ref_op(left: &Values, right: &Ast, scope: &mut impl Environment)
                 Vl(*snd.clone()),
         (Values::Map(map), Ast::FnApply(fn_name, args)) if map.contains_key(fn_name) =>
             eval_fn_app(map.get(fn_name).unwrap(), args, scope),
+        (Values::Ref(ptr, ptr_mut), rt) => 
+            if *ptr_mut {
+                do_dot_mut_ref_op(&mut ptr.borrow_mut(), rt, scope)
+            } else {
+                do_dot_ref_op(&*ptr.borrow(), rt, scope)
+            },
         (l, r) => str_exn(&format!("Unrecognized member {:?} in {:?}", r, l)[..]),
     }
 }
@@ -265,7 +335,7 @@ fn do_dot_mv_op(left: Values, right: &Ast, scope: &mut impl Environment) -> Res 
         (Values::Range(_, snd),
             Ast::FnApply(name, vec)) if name.eq("snd") && vec.is_empty() =>
                 Vl(*snd),
-        (l, r) => do_dot_ref_op(&l, r, scope),
+        (mut l, r) => do_dot_mut_ref_op(&mut l, r, scope),
     }
 }
 
@@ -344,12 +414,24 @@ fn arr_contains_all(arr: &Vec<Box<Values>>, args: &Vec<Box<Ast>>,
     Vl(Values::Bool(true))
 }
 
+/// Indexes `left[right]` where `left` is a name
+fn perform_name_index_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> Res {
+    if let Ast::Name(name) = left {
+        match (scope.find(name), eval(right, &mut ImmuScope::from(scope))) {
+            (Some((val, _)), Vl(rt)) => perform_index_op(&val.borrow(), rt),
+            (None, _) => Bad(format!("Unbound name {}", name)),
+            (_, e) => e,
+        }
+    } else { panic!("Precondition violated") }
+}
+
 /// Indexes `left`[`right`]
-fn perform_index_op(left: Values, right: Values) -> Res {
+/// `left` can be a reference
+fn perform_index_op(left: &Values, right: Values) -> Res {
     match (left, right) {
-        (Values::Array(mut x), Values::Int(idx)) => {
+        (Values::Array(x), Values::Int(idx)) => {
             if idx < x.len() as i32 && idx >= 0 {
-                Vl(*(x.swap_remove(idx as usize)))
+                Vl((*(x[idx as usize])).clone())
             } else {
                 Res::Exn(Values::Str(format!(
                     "Index out of bounds error {:?} has no index {:?}", x, idx)))
@@ -357,15 +439,10 @@ fn perform_index_op(left: Values, right: Values) -> Res {
         },
         (Values::Array(x), Values::Range(min, max)) => {
             if let (Values::Int(min), Values::Int(max)) = (*min, *max) {
-                if min <= max && min > 0 && max < x.len() as i32 {
-                    return Vl(
-                        Values::Array(
-                            x.get(min as usize..max as usize).unwrap().to_vec()
-                        )
-                    );
-                }
+                range_of_array(x, min, max)
+            } else {
+                Res::Exn(Values::Str("Invalid range for indexer".to_owned()))
             }
-            Res::Exn(Values::Str("Invalid range for indexer".to_owned()))
         },
         (Values::Map(x), Values::Str(name)) => {
             match x.get(&name) {
@@ -373,7 +450,27 @@ fn perform_index_op(left: Values, right: Values) -> Res {
                 _ => Res::Exn(Values::Str(format!("Map has no member {}", name))),
             }
         },
+        (Values::Ref(rf, _), idx) => perform_index_op(&rf.borrow(), idx),
         _ => str_exn("Unrecognized indexer"),
+    }
+}
+
+fn range_of_array(array: &Vec<Box<Values>>, start: i32, end: i32) -> Res {
+    if start >= 0 && end >= 0 && start <= array.len() as i32 && end <= array.len() as i32 {
+        let start = start as usize;
+        let end = end as usize;
+        let iter = if start < end { 
+            Box::new(start..end) as Box<dyn Iterator<Item = _>>
+        } else { 
+            Box::new((end + 1.. start + 1).rev())
+        };
+        let mut nw_array = Vec::<Box<Values>>::new();
+        for i in iter {
+            nw_array.push(array[i].clone());
+        }
+        Vl(Values::Array(nw_array))
+    } else {
+        str_exn("Range out of bounds")
     }
 }
 
@@ -887,7 +984,7 @@ fn eval_for_range(start: Values, end: Values, name: &String, ife: Option<&Ast>,
         let iter = if min == start { 
             Box::new(min..max) as Box<dyn Iterator<Item = _>>
         } else { 
-            Box::new((min..max).rev())
+            Box::new((min + 1 .. max + 1).rev())
         };
 
         for i in iter {
