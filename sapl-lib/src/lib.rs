@@ -30,6 +30,8 @@ mod tests {
     use crate::evaluator::Res;
     use std::collections::VecDeque;
     use std::collections::HashMap;
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     fn assert_toks_eq(left: &VecDeque<Tokens>, right: Vec<Tokens>) {
         assert_eq!(*left, VecDeque::from(right));
@@ -53,6 +55,11 @@ mod tests {
         let mut ts = lexer::tokenize(code.as_bytes());
         let ast = parser::parse(&mut ts).unwrap();
         assert_eq!(evaluator::evaluate(&ast), res);
+    }
+
+    fn assert_sapl_eq(left: &str, right: &str) {
+        assert_eq!(crate::parse_sapl(left.as_bytes()), 
+            crate::parse_sapl(right.as_bytes()))
     }
 
     #[test]
@@ -515,8 +522,9 @@ mod tests {
 
     #[test]
     fn list_test() {
-        assert_val_eq("[10, true, 10 + 10, 3.14]", Values::Array(vec![Box::new(Values::Int(10)),
-        Box::new(Values::Bool(true)), Box::new(Values::Int(20)), Box::new(Values::Float(3.14))]));
+        assert_val_eq("[10, true, 10 + 10, 3.14]", Values::Array(vec![Rc::new(RefCell::new(Values::Int(10))),
+        Rc::new(RefCell::new(Values::Bool(true))), Rc::new(RefCell::new(Values::Int(20))), 
+        Rc::new(RefCell::new(Values::Float(3.14)))]));
 
         assert_val_eq("[100, false, 'Hello'].size()", Values::Int(3));
 
@@ -614,9 +622,9 @@ mod tests {
 
     #[test]
     fn map_test() {
-        let mut m = HashMap::<String, Box<Values>>::new();
-        m.insert("name".to_owned(), Box::new(Values::Str("Billy".to_owned())));
-        m.insert("age".to_owned(), Box::new(Values::Int(53)));
+        let mut m = HashMap::<String, Rc<RefCell<Values>>>::new();
+        m.insert("name".to_owned(), Rc::new(RefCell::new(Values::Str("Billy".to_owned()))));
+        m.insert("age".to_owned(), Rc::new(RefCell::new(Values::Int(53))));
         assert_val_eq("{name: 'Billy', 'age': 53 }", Values::Map(m));
 
         assert_val_eq(r#"
@@ -916,10 +924,22 @@ mod tests {
         arr.push_back(3.14);
         lst
         "#, 
-        Values::Array(vec![Box::new(Values::Int(10)), 
-            Box::new(Values::Int(20)), 
-            Box::new(Values::Str("Hello".to_owned())),
-            Box::new(Values::Float(3.14))]));
+        Values::Array(vec![Rc::new(RefCell::new(Values::Int(10))), 
+            Rc::new(RefCell::new(Values::Int(20))), 
+            Rc::new(RefCell::new(Values::Str("Hello".to_owned()))),
+            Rc::new(RefCell::new(Values::Float(3.14)))]));
+
+        assert_sapl_eq(r#"
+        let lst = ['Hello', 'There', 'I', 'am', 'good'];
+        let lst2 = &lst;
+        lst2[2]
+        "#, "'I'");
+
+        assert_sapl_eq(r#"
+        let var lst = ['Hello', 'There', 'I', 'am', 'good'];
+        lst.get(0) <- 'Bye';
+        lst[0]
+        "#, "'Bye'");
     }
 
     #[test]
