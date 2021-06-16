@@ -912,10 +912,10 @@ mod tests {
         "#, Values::Int(3628800));
 
         assert_eval_eq(r#"let var n = 1; let p = &&n; p = 3"#, 
-            Res::Exn(Values::Str("Attempt to update a non-existant or immutable variable".to_owned())));
+            Res::Exn(Values::Str("Cannot mutate an immutable value".to_owned())));
 
         assert_eval_eq(r#"let var n = 1; let p = &n; p <- 3"#, 
-            Res::Exn(Values::Str("Cannot update immutable reference".to_owned())));
+            Res::Exn(Values::Str("Cannot mutate an immutable value".to_owned())));
 
         assert_val_eq(r#"
         let var lst = [];
