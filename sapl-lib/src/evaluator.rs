@@ -1,8 +1,8 @@
 use crate::parser::Ast;
 use crate::parser::Op;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::collections::HashMap;
 
 mod environment;
 use environment::*;
@@ -15,10 +15,10 @@ pub enum Values {
     Unit,
     Bool(bool),
     Func(Vec<String>, Ast, Rc<RefCell<Scope>>, Option<Ast>),
-    Array(Vec<Rc<RefCell<Values>>>),
-    Tuple(Vec<Box<Values>>),
+    Array(Box<Vec<Values>>),
+    Tuple(Box<Vec<Values>>),
     Range(Box<Values>, Box<Values>),
-    Map(HashMap<String, Rc<RefCell<Values>>>),
+    Map(Box<HashMap<String, Values>>),
     Placeholder,
     Ref(Rc<RefCell<Values>>, bool),
 }
@@ -30,11 +30,11 @@ pub enum Res {
     Bad(String),
     Ret(Values),
 }
-
+/*
 #[derive(PartialEq, Debug, Clone)]
 enum OpMode {
     Cpy, Ref, MRef,
-}
+}*/
 
 use Res::Vl;
 use Res::Bad;
@@ -281,14 +281,12 @@ fn do_dot_mut_ref_op(mut left: &mut Values, right: &Ast, scope: &mut impl Enviro
         (Values::Array(x),
             Ast::FnApply(name, args)) if name.eq("push_back") && !args.is_empty() => 
             eval_dot_args(args, scope, |val| -> Option<Res> { 
-                x.push(Rc::new(RefCell::new(val))); 
+                (*x).push(val); 
                 None 
             }),
         (Values::Array(x),
-            Ast::FnApply(name, args)) if name.eq("get") && args.len() == 1 => 
-                eval_dot_args(args, scope, |val| {
-                    Some(index_array(x, val, OpMode::MRef))
-                }),
+            Ast::FnApply(name, args)) if name.eq("set") && args.len() == 2 => 
+                array_set(&mut *x, args, scope),
         (Values::Map(mp),
             Ast::FnApply(name, args)) if name.eq("insert") && !args.is_empty() =>
                 map_insert(mp, args, scope),
@@ -319,15 +317,30 @@ fn eval_dot_args<F>(args: &Vec<Box<Ast>>, scope: &mut impl Environment, mut clos
     Vl(Values::Unit)
 }
 
-fn map_insert(map: &mut HashMap<String, Rc<RefCell<Values>>>, args: &Vec<Box<Ast>>, 
+/// Requires `args` has 2 elements
+fn array_set(array: &mut Vec<Values>, args: &Vec<Box<Ast>>, scope: &mut impl Environment) -> Res {
+    match (eval(&*args[0], scope), eval(&*args[1], scope)) {
+        (Vl(Values::Int(idx)), Vl(v)) => {
+            if idx >= 0 && idx < array.len() as i32 {
+                array[idx as usize] = v;
+                Vl(Values::Unit)
+            } else {
+                str_exn(IDX_BNDS)
+            }
+        },
+        _ => inv_arg("array::set", None),
+    }
+}
+
+fn map_insert(map: &mut HashMap<String, Values>, args: &Vec<Box<Ast>>, 
     scope: &mut impl Environment) -> Res 
 {
     if args.len() == 1 {
         match eval(&*args[0], scope) {
             Vl(Values::Tuple(mut x)) if x.len() == 2 => {
-                match (*x.swap_remove(0), *x.pop().unwrap()) {
+                match (x.swap_remove(0), x.pop().unwrap()) {
                     (Values::Str(x), val) => {
-                        map.insert(x, Rc::new(RefCell::new(val)));
+                        map.insert(x, val);
                         Vl(Values::Unit)
                     },
                     _ => inv_arg("map::insert",
@@ -341,7 +354,7 @@ fn map_insert(map: &mut HashMap<String, Rc<RefCell<Values>>>, args: &Vec<Box<Ast
     else if args.len() == 2 {
         match (eval(&*args[0], scope), eval(&*args[1], scope)) {
             (Vl(Values::Str(key)), Vl(val)) => {
-                map.insert(key, Rc::new(RefCell::new(val)));
+                map.insert(key, val);
                 Vl(Values::Unit)
             },
             (Vl(_), _) => inv_arg("map::insert", 
@@ -362,7 +375,7 @@ fn do_dot_ref_op(left: &Values, right: &Ast, scope: &mut impl Environment)
     match (left, right) {
         (Values::Array(x), 
             Ast::FnApply(name, vec)) if vec.is_empty() && name.eq("size") => 
-                Vl(Values::Int(x.len() as i32)),
+                Vl(Values::Int((*x).len() as i32)),
         (Values::Map(map), Ast::FnApply(fn_name, args)) 
             if fn_name.eq("contains") && !args.is_empty() =>
                 map_contains_all(map, args, scope),
@@ -370,7 +383,7 @@ fn do_dot_ref_op(left: &Values, right: &Ast, scope: &mut impl Environment)
                 if fn_name.eq("contains") && !args.is_empty() =>
                     arr_contains_all(x, args, scope),
         (Values::Map(map), Ast::Name(nm)) if map.contains_key(nm) =>
-            Vl(map.get(nm).unwrap().borrow().clone()),
+            Vl(map.get(nm).unwrap().clone()),
         (Values::Range(fst, _),
             Ast::FnApply(name, vec)) if name.eq("fst") && vec.is_empty() =>
                 Vl(*fst.clone()),
@@ -378,10 +391,7 @@ fn do_dot_ref_op(left: &Values, right: &Ast, scope: &mut impl Environment)
             Ast::FnApply(name, vec)) if name.eq("snd") && vec.is_empty() =>
                 Vl(*snd.clone()),
         (Values::Map(map), Ast::FnApply(fn_name, args)) if map.contains_key(fn_name) =>
-            eval_fn_app(&map.get(fn_name).unwrap().borrow(), args, scope),
-        (Values::Array(x),
-            Ast::FnApply(name, args)) if name.eq("get") && args.len() == 1 => 
-                eval_dot_args(args, scope, |val| { Some(index_array(x, val, OpMode::Ref)) }),
+            eval_fn_app(&map.get(fn_name).unwrap(), args, scope),
         (Values::Ref(ptr, ptr_mut), rt) => 
             if *ptr_mut {
                 do_dot_mut_ref_op(&mut ptr.borrow_mut(), rt, scope)
@@ -409,23 +419,23 @@ fn do_dot_mv_op(left: Values, right: &Ast, scope: &mut impl Environment) -> Res 
 fn perform_concat(left: Values, right: Values) -> Res {
     match (left, right) {
         (Values::Array(mut x), y) => {
-            x.push(Rc::new(RefCell::new(y)));
+            (*x).push(y);
             Vl(Values::Array(x))
         },
         (Values::Map(mut x), Values::Tuple(mut y)) if y.len() == 2 => {
-            if let (Values::Str(key), val) = (*y.swap_remove(0), y.pop().unwrap()) {
-                x.insert(key, Rc::new(RefCell::new(*val)));
+            if let (Values::Str(key), val) = (y.swap_remove(0), y.pop().unwrap()) {
+                x.insert(key, val);
                 Vl(Values::Map(x))
             } else {
                 inv_arg("map @", Some("Can only concatenate maps with tuples"))
             }
         },
         (Values::Map(x), Values::Array(y)) =>
-            map_concat_array(x, y),
+            map_concat_array(*x, *y),
         (Values::Map(mut x), Values::Map(y)) => {
             for val in y.into_iter() {
                 let (k, v) = val;
-                x.insert(k, Rc::new(RefCell::new(v.borrow().clone())));
+                x.insert(k, v);
             };
             Vl(Values::Map(x))
         },
@@ -434,14 +444,14 @@ fn perform_concat(left: Values, right: Values) -> Res {
 }
 
 /// Inserts key-value pairs of `array` into `map`
-fn map_concat_array(mut map: HashMap<String, Rc<RefCell<Values>>>, 
-    array: Vec<Rc<RefCell<Values>>>) -> Res 
+fn map_concat_array(mut map: HashMap<String, Values>, 
+    array: Vec<Values>) -> Res 
 {
     for elem in array.into_iter() {
-        if let Values::Tuple(mut pair) = elem.borrow().clone() {
+        if let Values::Tuple(mut pair) = elem {
             if pair.len() == 2 {
-                if let (Values::Str(key), val) = (*pair.swap_remove(0), pair.pop().unwrap()) {
-                    map.insert(key, Rc::new(RefCell::new(*val)));
+                if let (Values::Str(key), val) = (pair.swap_remove(0), pair.pop().unwrap()) {
+                    map.insert(key, val);
                 } else {
                     return inv_arg("map @", 
                         Some("Can only concatenate maps with list of k/v pairs"));
@@ -455,12 +465,12 @@ fn map_concat_array(mut map: HashMap<String, Rc<RefCell<Values>>>,
                 Some("Must concatenate map with a list of k/v pairs"));
         }
     };
-    Vl(Values::Map(map))
+    Vl(Values::Map(Box::new(map)))
 }
 
 /// Returns a boolean value if `map` contains all values in `args` once
 /// `args` is evaluated
-fn map_contains_all(map: &HashMap<String, Rc<RefCell<Values>>>, args: &Vec<Box<Ast>>,
+fn map_contains_all(map: &HashMap<String, Values>, args: &Vec<Box<Ast>>,
     scope: &mut impl Environment) -> Res
 {
     for e in args {
@@ -476,12 +486,12 @@ fn map_contains_all(map: &HashMap<String, Rc<RefCell<Values>>>, args: &Vec<Box<A
 }
 
 /// True if `arr` contains all of the vales from the evaluated asts in `args`
-fn arr_contains_all(arr: &Vec<Rc<RefCell<Values>>>, args: &Vec<Box<Ast>>,
+fn arr_contains_all(arr: &Vec<Values>, args: &Vec<Box<Ast>>,
     scope: &mut impl Environment) -> Res
 {
     for e in args {
         match eval(&*e, scope) {
-            Vl(x) => if arr.iter().find(|bx| {&*bx.borrow() == &x}) == None {
+            Vl(x) => if arr.iter().find(|bx| {**bx == x}) == None {
                 return Vl(Values::Bool(false));
             },
             e => return e,
@@ -505,10 +515,10 @@ fn perform_name_index_op(left: &Ast, right: &Ast, scope: &mut impl Environment) 
 /// `left` can be a reference
 fn perform_index_op(left: &Values, right: Values) -> Res {
     match (left, right) {
-        (Values::Array(x), v) => index_array(x, v, OpMode::Cpy),
+        (Values::Array(x), v) => index_array(x, v),
         (Values::Map(x), Values::Str(name)) => {
             match x.get(&name) {
-                Some(member) => Vl(member.borrow().clone()),
+                Some(member) => Vl(member.clone()),
                 _ => ukn_name(&name),
             }
         },
@@ -517,21 +527,18 @@ fn perform_index_op(left: &Values, right: Values) -> Res {
     }
 }
 
-fn index_array(array: &Vec<Rc<RefCell<Values>>>, indexer: Values, mode: OpMode) -> Res {
+fn index_array(array: &Vec<Values>, indexer: Values) -> Res {
     match indexer {
         Values::Int(idx) => {
             if idx < array.len() as i32 && idx >= 0 {
-                if mode == OpMode::Cpy 
-                    { Vl((*(array[idx as usize])).borrow().clone()) }
-                else
-                    { Vl(Values::Ref(array[idx as usize].clone(), mode == OpMode::MRef)) }
+                Vl(array[idx as usize].clone())
             } else {
                 str_exn(IDX_BNDS)
             }
         },
         Values::Range(min, max) => {
             if let (Values::Int(min), Values::Int(max)) = (*min, *max) {
-                range_of_array(array, min, max, mode)
+                range_of_array(array, min, max)
             } else {
                 str_exn(IDX_BNDS)
             }
@@ -540,7 +547,7 @@ fn index_array(array: &Vec<Rc<RefCell<Values>>>, indexer: Values, mode: OpMode) 
     }
 }
 
-fn range_of_array(array: &Vec<Rc<RefCell<Values>>>, start: i32, end: i32, mode: OpMode) -> Res {
+fn range_of_array(array: &Vec<Values>, start: i32, end: i32) -> Res {
     if start >= 0 && end >= 0 && start <= array.len() as i32 && end <= array.len() as i32 {
         let start = start as usize;
         let end = end as usize;
@@ -549,15 +556,11 @@ fn range_of_array(array: &Vec<Rc<RefCell<Values>>>, start: i32, end: i32, mode: 
         } else { 
             Box::new((end + 1.. start + 1).rev())
         };
-        let mut nw_array = Vec::<Rc<RefCell<Values>>>::new();
+        let mut nw_array = Vec::<Values>::new();
         for i in iter {
-            let elem = if mode == OpMode::Cpy 
-                { Rc::new(RefCell::new(array[i].borrow().clone())) }
-            else
-                { array[i].clone() };
-            nw_array.push(elem);
+            nw_array.push(array[i].clone());
         }
-        Vl(Values::Array(nw_array))
+        Vl(Values::Array(Box::new(nw_array)))
     } else {
         str_exn(IDX_BNDS)
     }
@@ -739,7 +742,7 @@ fn eval_let(names: &Vec<(String, bool)>, ast: &Ast, scope: &mut impl Environment
         Vl(Values::Tuple(es)) if names.len() == es.len() => {
             for (nm, v) in names.iter().zip(es.into_iter()) {
                 let (nm, is_mut) = nm;
-                scope.add(nm.to_string(), *v, *is_mut);
+                scope.add(nm.to_string(), v, *is_mut);
             }
             Vl(Values::Unit)
         },
@@ -930,37 +933,37 @@ fn check_func_post(result: Values, postcondition: &Option<Ast>, scope: &impl Env
 
 /// Evaluates an array of asts into an array of values
 fn eval_arr(elems: &Vec<Box<Ast>>, scope: &mut impl Environment) -> Res {
-    let mut lst = Vec::<Rc<RefCell<Values>>>::new();
+    let mut lst = Vec::<Values>::new();
     for expr in elems {
         match eval(expr, scope) {
-            Vl(val) => lst.push(Rc::new(RefCell::new(val))),
+            Vl(val) => lst.push(val),
             e => return e,
         }
     }
-    Vl(Values::Array(lst))
+    Vl(Values::Array(Box::new(lst)))
 }
 
 fn eval_tuple(elems: &Vec<Box<Ast>>, scope: &mut impl Environment) -> Res {
-    let mut lst = Vec::<Box<Values>>::new();
+    let mut lst = Vec::<Values>::new();
     for expr in elems {
         match eval(expr, scope) {
-            Vl(val) => lst.push(Box::new(val)),
+            Vl(val) => lst.push(val),
             e => return e,
         }
     }
-    Vl(Values::Tuple(lst))
+    Vl(Values::Tuple(Box::new(lst)))
 }
 
 /// Evaluates a map
 fn eval_map(es: &HashMap<String, Box<Ast>>, scope: &mut impl Environment) -> Res {
-    let mut map = HashMap::<String, Rc<RefCell<Values>>>::new();
+    let mut map = HashMap::<String, Values>::new();
     for (k, v) in es {
         match eval(v, scope) {
-            Vl(val) => map.insert(k.clone(), Rc::new(RefCell::new(val))),
+            Vl(val) => map.insert(k.clone(), val),
             e => return e,
         };
     }
-    Vl(Values::Map(map))
+    Vl(Values::Map(Box::new(map)))
 }
 
 /// Evaluates a try block
@@ -1062,9 +1065,9 @@ fn eval_for(names: &Vec<String>, iter: &Ast, if_expr: &Option<Box<Ast>>,
         Vl(Values::Range(start, end)) if names.len() == 1 => 
             eval_for_range(*start, *end, &names[0], ife, body, scope),
         Vl(Values::Array(vals)) =>
-            eval_for_array(vals, names, ife, body, scope),
+            eval_for_array(*vals, names, ife, body, scope),
         Vl(Values::Map(map)) => 
-            eval_for_map(map, names, ife, body, scope),
+            eval_for_map(*map, names, ife, body, scope),
         _ => str_exn(NON_ITER),
 
     }
@@ -1111,16 +1114,15 @@ fn filter_out_for_loop_iter(expr: Option<&Ast>, scope: &mut impl Environment) ->
     } else { false }
 }
 
-fn eval_for_array(arr: Vec<Rc<RefCell<Values>>>, names: &Vec<String>, 
+fn eval_for_array(arr: Vec<Values>, names: &Vec<String>, 
     ife: Option<&Ast>, body: &Ast, scope: &mut impl Environment) -> Res 
 {
     for val in arr.into_iter() {
-        let val = val.borrow().clone();
         let mut child_scope = ScopeProxy::new(scope);
         match (names.len(), val) {
             (x, Values::Tuple(tup)) if x == tup.len() => {
                 for (name, v) in names.iter().zip(tup.into_iter()) {
-                    child_scope.add(name.to_string(), *v, false);
+                    child_scope.add(name.to_string(), v, false);
                 }
             },
             (1, v) => child_scope.add(names[0].to_string(), v, false),
@@ -1137,7 +1139,7 @@ fn eval_for_array(arr: Vec<Rc<RefCell<Values>>>, names: &Vec<String>,
     Vl(Values::Unit)
 }
 
-fn eval_for_map(map: HashMap<String, Rc<RefCell<Values>>>, names: &Vec<String>, 
+fn eval_for_map(map: HashMap<String, Values>, names: &Vec<String>, 
     ife: Option<&Ast>, body: &Ast, scope: &mut impl Environment) -> Res 
 {
     for (key, val) in map.into_iter() {
@@ -1147,12 +1149,11 @@ fn eval_for_map(map: HashMap<String, Rc<RefCell<Values>>>, names: &Vec<String>,
                 child_scope.add(names[0].to_string(), 
                     Values::Str(key), false);
                 child_scope.add(names[1].to_string(), 
-                    val.borrow().clone(), false);
+                    val, false);
             },
             1 => child_scope.add(names[0].to_string(), 
                 Values::Tuple(
-                    vec![Box::new(Values::Str(key)), 
-                    Box::new(val.borrow().clone())]), 
+                    Box::new(vec![Values::Str(key), val])), 
                 false),
             _ => return str_exn(INV_DEF),
         };

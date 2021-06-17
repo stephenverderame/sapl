@@ -30,8 +30,6 @@ mod tests {
     use crate::evaluator::Res;
     use std::collections::VecDeque;
     use std::collections::HashMap;
-    use std::cell::RefCell;
-    use std::rc::Rc;
 
     fn assert_toks_eq(left: &VecDeque<Tokens>, right: Vec<Tokens>) {
         assert_eq!(*left, VecDeque::from(right));
@@ -522,9 +520,9 @@ mod tests {
 
     #[test]
     fn list_test() {
-        assert_val_eq("[10, true, 10 + 10, 3.14]", Values::Array(vec![Rc::new(RefCell::new(Values::Int(10))),
-        Rc::new(RefCell::new(Values::Bool(true))), Rc::new(RefCell::new(Values::Int(20))), 
-        Rc::new(RefCell::new(Values::Float(3.14)))]));
+        assert_val_eq("[10, true, 10 + 10, 3.14]", Values::Array(Box::new(vec![Values::Int(10),
+        Values::Bool(true), Values::Int(20), 
+        Values::Float(3.14)])));
 
         assert_val_eq("[100, false, 'Hello'].size()", Values::Int(3));
 
@@ -622,10 +620,10 @@ mod tests {
 
     #[test]
     fn map_test() {
-        let mut m = HashMap::<String, Rc<RefCell<Values>>>::new();
-        m.insert("name".to_owned(), Rc::new(RefCell::new(Values::Str("Billy".to_owned()))));
-        m.insert("age".to_owned(), Rc::new(RefCell::new(Values::Int(53))));
-        assert_val_eq("{name: 'Billy', 'age': 53 }", Values::Map(m));
+        let mut m = HashMap::<String, Values>::new();
+        m.insert("name".to_owned(), Values::Str("Billy".to_owned()));
+        m.insert("age".to_owned(), Values::Int(53));
+        assert_val_eq("{name: 'Billy', 'age': 53 }", Values::Map(Box::new(m)));
 
         assert_val_eq(r#"
         let map = {
@@ -924,10 +922,10 @@ mod tests {
         arr.push_back(3.14);
         lst
         "#, 
-        Values::Array(vec![Rc::new(RefCell::new(Values::Int(10))), 
-            Rc::new(RefCell::new(Values::Int(20))), 
-            Rc::new(RefCell::new(Values::Str("Hello".to_owned()))),
-            Rc::new(RefCell::new(Values::Float(3.14)))]));
+        Values::Array(Box::new(vec![Values::Int(10), 
+            Values::Int(20), 
+            Values::Str("Hello".to_owned()),
+            Values::Float(3.14)])));
 
         assert_sapl_eq(r#"
         let lst = ['Hello', 'There', 'I', 'am', 'good'];
@@ -936,10 +934,18 @@ mod tests {
         "#, "'I'");
 
         assert_sapl_eq(r#"
-        let var lst = ['Hello', 'There', 'I', 'am', 'good'];
-        lst.get(0) <- 'Bye';
-        lst[0]
-        "#, "'Bye'");
+        let lst1 = [4, 3, 5];
+        let var lst2 = lst1 @ 45;
+        lst2.set(0, 100);
+        lst2[0] + lst1[0]
+        "#, "104");
+
+        assert_sapl_eq(r#"
+        let lst = [&&5, &&6, &&8];
+        lst[0] <- 3;
+        *(lst[0])
+        "#, "3");
+
     }
 
     #[test]
