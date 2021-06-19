@@ -13,7 +13,9 @@ use std_sapl::type_of;
 mod exn;
 use exn::*;
 
-#[derive(PartialEq, Debug, Clone)]
+use std::fmt;
+
+#[derive(Clone)]
 pub enum Values {
     Int(i32),
     Float(f64),
@@ -27,7 +29,7 @@ pub enum Values {
     Map(Box<HashMap<String, Values>>),
     Placeholder,
     Ref(Rc<RefCell<Values>>, bool),
-    RustFunc(fn(Vec<Values>) -> Res),
+    RustFunc(Rc<dyn Fn(Vec<Values>) -> Res>, usize),
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -37,11 +39,47 @@ pub enum Res {
     Bad(String),
     Ret(Values),
 }
-/*
-#[derive(PartialEq, Debug, Clone)]
-enum OpMode {
-    Cpy, Ref, MRef,
-}*/
+
+impl PartialEq for Values {
+    fn eq(&self, other: &Values) -> bool {
+        use Values::*;
+        match (self, other) {
+            (Int(a), Int(b)) => a == b,
+            (Float(a), Float(b)) => a == b,
+            (Bool(a), Bool(b)) => a == b,
+            (Str(a), Str(b)) => a == b,
+            (Array(a), Array(b)) => a == b,
+            (Map(a), Map(b)) => a == b,
+            (Ref(a, c), Ref(b, d)) => a == b && c == d,
+            (Tuple(a), Tuple(b)) => a == b,
+            (Func(a, b, c, d), Func(x, y, z, w)) => 
+                a == x && b == y && c == z && d == w,
+            (Range(a, b), Range(c, d)) => a == c && b == d,
+            (Unit, Unit) => true,
+            (Placeholder, Placeholder) => true,
+            _ => false,
+        }
+    }
+}
+
+impl std::fmt::Debug for Values {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use Values::*;
+        match self {
+            RustFunc(..) | Func(..) => write!(f, "<function>"),
+            Int(x) => write!(f, "{}", x),
+            Str(x) => write!(f, "{}", x),
+            Bool(x) => write!(f, "{}", x),
+            Float(x) => write!(f, "{}", x),
+            Array(x) | Tuple(x) => write!(f, "{:?}", x),
+            Map(x) => write!(f, "{:?}", x),
+            Ref(x, _) => write!(f, "{:?}", x),
+            Placeholder => write!(f, "<placeholder>"),
+            Unit => write!(f, "<unit>"),
+            Range(a, b) => write!(f, "{:?}..{:?}", a, b),          
+        }
+    }
+}
 
 use Res::Vl;
 use Res::Bad;
@@ -407,14 +445,13 @@ fn do_dot_ref_op(left: &Values, right: &Ast, scope: &mut impl Environment)
             },
         (v, Ast::FnApply(fn_name, args)) => {
             if let Some((ptr, _)) = scope.find(&fn_name[..]) {
-                if let f @ Values::Func(..) = &*ptr.borrow() {
-                    let mut vc = vec![v.clone()];
-                    eval_dot_args(args, scope, |val| -> Option<Res> {
-                        vc.push(val);
-                        None
-                    });
-                    return apply_function(f, vc, true);
-                }
+                let f = &*ptr.borrow();
+                let mut vc = vec![v.clone()];
+                eval_dot_args(args, scope, |val| -> Option<Res> {
+                    vc.push(val);
+                    None
+                });
+                return apply_function(&f, vc, true);
             }
             bad_op(v, None, Op::Dot)
         },
@@ -862,35 +899,19 @@ fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment
 fn eval_fn_app(func: &Values, args: &Vec<Box<Ast>>, scope: &mut impl Environment)
     -> Res
 {
-    match func {
-        f @ Values::Func(..) => {
-            let mut val_args = Vec::<Values>::new();
-            let mut arg_scope = ImmuScope::from(scope);
-            for expr in args {
-                match eval(&*expr, &mut arg_scope) {
-                    Vl(v) => val_args.push(v),
-                    e => return e,
-                }
-            }
-            apply_function(f, val_args, false)
-        },
-        Values::RustFunc(func) => {
-            let mut params = Vec::<Values>::new();
-            eval_dot_args(args, scope, |val| -> Option<Res> {
-                params.push(val);
-                None
-            });
-            func(params)
-        },
-        _ => str_exn(NFUNC),
-    }
+    let mut val_args = Vec::<Values>::new();
+    eval_dot_args(args, scope, |val| -> Option<Res> {
+        val_args.push(val);
+        None
+    });
+    apply_function(func, val_args, false)
+
 }
 
 /// Evaluates the pipeline argument `left |> func`
 fn eval_pipeline(left: Values, func: Values) -> Res 
 {
     apply_function(&func, vec![left], true)
-    // TODO Make rust functions work with pipelining by modifying apply_function
 }  
 
 /// Applies `args` to the function `func`
@@ -898,42 +919,98 @@ fn eval_pipeline(left: Values, func: Values) -> Res
 /// If `allow_incomplete` is true, assumes that if `args.len()` is less than
 /// the amount of parameters, the remaining parameters will be placeholders and a partial application
 /// will be performed
-fn apply_function(func: &Values, mut args: Vec<Values>, allow_incomplete: bool) 
+fn apply_function(func: &Values, args: Vec<Values>, allow_incomplete: bool) 
     -> Res 
 {
-    if let Values::Func(params, ast, fn_scope, postcondition) = func {
-        if allow_incomplete && args.len() < params.len() {
-            args.append(&mut vec![Values::Placeholder; params.len() - args.len()]);
-        } else if params.len() != args.len() { 
-            return Bad(format!("Arg count mismatch formals {} vs args {} and incomplete: {}",
-                params.len(), args.len(), allow_incomplete)); 
-        }
+    match func {
+        Values::Func(params, ast, fn_scope, postcondition) =>
+            apply_sapl_function(params, ast, fn_scope, postcondition, args, allow_incomplete),
+        Values::RustFunc(func, min_args) => 
+            apply_rust_function(func.clone(), *min_args, args, allow_incomplete),
+        _ => str_exn(NFUNC),
+    } 
+}
 
-        let mut sub = fn_scope.borrow().cpy();
-        let mut sc = ScopeProxy::from(&mut sub);
-        let mut is_partial = false;
-        let mut missing_params = Vec::<String>::new();
-        for (nm, arg) in params.iter().zip(args.into_iter()) {
-            match arg {
-                Values::Placeholder => {
-                    missing_params.push(nm.to_string());
-                    is_partial = true
-                },
-                v => sc.add(nm.to_string(), v, false),
-            }
+/// Applies a function defined in Sapl
+/// `params` the names of the local parameters
+/// `ast` the body of the function
+/// `fn_scope` the saved scope of the function
+/// `postcondition` the function's PCE
+/// `args` the values passed to the function
+/// `allow_incomplete` true to allow implicit partial application
+fn apply_sapl_function(params: &Vec<String>, ast: &Ast, fn_scope: &Rc<RefCell<Scope>>, 
+    postcondition: &Option<Ast>, mut args: Vec<Values>, allow_incomplete: bool) -> Res 
+{
+    if allow_incomplete && args.len() < params.len() {
+        args.append(&mut vec![Values::Placeholder; params.len() - args.len()]);
+    } else if params.len() != args.len() { 
+        return Bad(format!("Arg count mismatch formals {} vs args {} and incomplete: {}",
+            params.len(), args.len(), allow_incomplete)); 
+    }
+
+    let mut sub = fn_scope.borrow().cpy();
+    let mut sc = ScopeProxy::from(&mut sub);
+    let mut is_partial = false;
+    let mut missing_params = Vec::<String>::new();
+    for (nm, arg) in params.iter().zip(args.into_iter()) {
+        match arg {
+            Values::Placeholder => {
+                missing_params.push(nm.to_string());
+                is_partial = true
+            },
+            v => sc.add(nm.to_string(), v, false),
         }
-        if is_partial {
-            Vl(Values::Func(missing_params, ast.clone(), 
-                Rc::new(RefCell::new(sc.cpy())), postcondition.clone()))
-        } else {
-            match eval(ast, &mut sc) {
-                Res::Ret(v) | Vl(v) => 
-                    check_func_post(v, postcondition, &*fn_scope.borrow()),
-                e => e,
-            }
-        }
+    }
+    if is_partial {
+        Vl(Values::Func(missing_params, ast.clone(), 
+            Rc::new(RefCell::new(sc.cpy())), postcondition.clone()))
     } else {
-        str_exn(NFUNC)
+        match eval(ast, &mut sc) {
+            Res::Ret(v) | Vl(v) => 
+                check_func_post(v, postcondition, &*fn_scope.borrow()),
+            e => e,
+        }
+    }
+}
+
+/// Evaluates a built in interpreter function
+/// `func` the rust function
+/// `min_args` the minimum arguments to call `func`
+/// `args` the args passed to `func`
+/// `allow_incomplete` true to allow implicit partial application
+fn apply_rust_function(func: Rc<dyn Fn(Vec<Values>) -> Res>, min_args: usize, 
+    args: Vec<Values>, allow_incomplete: bool) -> Res 
+{
+    let mut params = Vec::<Values>::new();
+    let mut missing_params = Vec::<usize>::new();
+    let mut idx = 0;
+    for a in args {
+        match a {
+            Values::Placeholder => missing_params.push(idx),
+            v => params.push(v),
+        };
+        idx = idx + 1;
+    }
+    if (params.len() < min_args && allow_incomplete)
+        || !missing_params.is_empty() 
+    {
+        let min_args = std::cmp::max(min_args - params.len(), 0);
+        let new_func = move |mut a: Vec<Values>| -> Res {
+            let mut params = params.clone();
+            for i in 0 .. missing_params.len() {
+                if !a.is_empty() {
+                    params.insert(missing_params[i], a.swap_remove(0));
+                } else { break; }
+            }
+            if !a.is_empty() {
+                params.append(&mut a);
+            }
+            
+            apply_rust_function(func.clone(), min_args, params, allow_incomplete)
+        };
+        Vl(Values::RustFunc(Rc::new(new_func), min_args))
+    } else {
+        func(params)
     }
 }
 

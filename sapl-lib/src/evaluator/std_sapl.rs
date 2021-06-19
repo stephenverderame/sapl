@@ -4,11 +4,12 @@ use super::Res;
 use super::Values;
 use super::exn::*;
 use rand::Rng;
+use std::rc::Rc;
 
 use super::Res::Vl;
 
-fn add_func(scope: &mut Scope, name: &str, func: fn(Vec<Values>) -> Res) {
-    scope.add(name.to_owned(), Values::RustFunc(func), false);
+fn add_func(scope: &mut Scope, name: &str, func: fn(Vec<Values>) -> Res, min_args: usize) {
+    scope.add(name.to_owned(), Values::RustFunc(Rc::new(func), min_args), false);
 }
 
 fn add_name(scope: &mut Scope, name: &str, val: Values) {
@@ -17,10 +18,10 @@ fn add_name(scope: &mut Scope, name: &str, val: Values) {
 
 pub fn get_std_environment() -> Scope {
     let mut scope = Scope::new();
-    add_func(&mut scope, "typeof", eval_type);
-    add_func(&mut scope, "assert", eval_assert);
-    add_func(&mut scope, "len", eval_len);
-    add_func(&mut scope, "random", eval_rand);
+    add_func(&mut scope, "typeof", eval_type, 1);
+    add_func(&mut scope, "assert", eval_assert, 1);
+    add_func(&mut scope, "len", eval_len, 1);
+    add_func(&mut scope, "random", eval_rand, 1);
     add_name(&mut scope, "None", Values::Unit);
     scope
 }

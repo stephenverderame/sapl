@@ -991,6 +991,10 @@ mod tests {
         let r = &20;
         (40).zdiv(20) + r.zdiv(10)
         "#, "4");
+
+        assert_sapl_eq(r#"
+        ([10, 20, 30] |> len) + [0, 1, 2].len()
+        "#, "6");
     }
 
     #[test]
