@@ -7,6 +7,12 @@ use std::cell::RefCell;
 mod environment;
 use environment::*;
 
+mod std_sapl;
+use std_sapl::type_of;
+
+mod exn;
+use exn::*;
+
 #[derive(PartialEq, Debug, Clone)]
 pub enum Values {
     Int(i32),
@@ -21,6 +27,7 @@ pub enum Values {
     Map(Box<HashMap<String, Values>>),
     Placeholder,
     Ref(Rc<RefCell<Values>>, bool),
+    RustFunc(fn(Vec<Values>) -> Res),
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -39,46 +46,9 @@ enum OpMode {
 use Res::Vl;
 use Res::Bad;
 
-static UNKNOWN_NAME: &'static str = "Unknown name exception";
-static PCE_FAIL: &'static str = "Function post-condition violated";
-static INV_UOP: &'static str = "Invalid value or operation";
-static IMMU_ERR: &'static str = "Cannot mutate an immutable value";
-static NREF: &'static str = "Applying reference operator to non-reference";
-static INV_ARG: &'static str = "Invalid argument to function";
-static DIV_Z: &'static str = "Divide by zero exception";
-static IDX_BNDS: &'static str = "Index out of bounds";
-static NFUNC: &'static str = "Not a function";
-static INV_DEF: &'static str = "Invalid definition or structured binding";
-static NON_ITER: &'static str = "Attempt to iterate over non-iterable";
-
-fn str_exn(msg: &str) -> Res {
-    Res::Exn(Values::Str(msg.to_owned()))
-}
-
-fn ukn_name(name: &String) -> Res {
-    Res::Exn(Values::Str(format!("{}: {}", UNKNOWN_NAME, name)))
-}
-fn bad_op(left: &Values, right: Option<&Values>, op: Op) -> Res {
-    let err_msg = if right == None {
-        format!("{:?} {:?} {:?}", left, op, right)
-    } else {
-        format!("{:?} {:?}", op, left)
-    };
-    Res::Exn(Values::Str(format!("{}: {}", INV_UOP, err_msg)))
-}
-
-fn inv_arg(func: &str, info: Option<&str>) -> Res{
-    if info == None {
-        Res::Exn(Values::Str(format!("{} {}", INV_ARG, func)))
-    } else {
-        Res::Exn(Values::Str(format!("{} {} : {}", INV_ARG, func, info.unwrap())))
-    }
-}
-
-
 /// Evaluates a SAPL AST
 pub fn evaluate(ast: &Ast) -> Res {
-    eval(ast, &mut Scope::new())
+    eval(ast, &mut std_sapl::get_std_environment())
 }
 
 /// Evaluates the ast to a value
@@ -99,8 +69,6 @@ fn eval(ast: &Ast, scope: &mut impl Environment) -> Res {
         Ast::Func(name, params, ast, post) => 
             eval_func(name, params, &*ast, post, scope),
         Ast::Lambda(params, ast) => eval_lambda(params, &*ast, scope),
-        Ast::FnApply(name, args) if is_rust_func(&name[..]) => 
-            eval_rust_func(&name[..], args, scope),
         Ast::FnApply(name, args) => match scope.find(name) {
             Some((val, _)) => eval_fn_app(&val.borrow(), args, &mut ImmuScope::from(scope)),
             _ => ukn_name(name),
@@ -287,9 +255,34 @@ fn do_dot_mut_ref_op(mut left: &mut Values, right: &Ast, scope: &mut impl Enviro
         (Values::Array(x),
             Ast::FnApply(name, args)) if name.eq("set") && args.len() == 2 => 
                 array_set(&mut *x, args, scope),
+        (Values::Array(x),
+            Ast::FnApply(name, args)) if name.eq("insert") && args.len() == 2 =>
+                array_insert(&mut *x, args, scope),
+        (Values::Array(x),
+            Ast::FnApply(name, args)) if name.eq("remove") && !args.is_empty() =>
+                eval_dot_args(args, scope, |val| {
+                    if let Values::Int(v) = val {
+                        if v >= 0 && v < x.len() as i32 {
+                            x.remove(v as usize);
+                        } 
+                        None
+                    } else {
+                        Some(inv_arg("array::remove", None))
+                    }
+                }),
         (Values::Map(mp),
             Ast::FnApply(name, args)) if name.eq("insert") && !args.is_empty() =>
                 map_insert(mp, args, scope),
+        (Values::Map(mp),
+                Ast::FnApply(name, args)) if name.eq("remove") && !args.is_empty() =>
+                    eval_dot_args(args, scope, |val| {
+                        if let Values::Str(v) = val {
+                            mp.remove(&v);
+                            None
+                        } else {
+                            Some(inv_arg("map::remove", None))
+                        }
+                    }),
         (Values::Ref(ptr, ptr_mut), rt) => 
             if *ptr_mut {
                 do_dot_mut_ref_op(&mut ptr.borrow_mut(), rt, scope)
@@ -329,6 +322,23 @@ fn array_set(array: &mut Vec<Values>, args: &Vec<Box<Ast>>, scope: &mut impl Env
             }
         },
         _ => inv_arg("array::set", None),
+    }
+}
+
+fn array_insert(array: &mut Vec<Values>, args: &Vec<Box<Ast>>, scope: &mut impl Environment) -> Res {
+    match (eval(&*args[0], scope), eval(&*args[1], scope)) {
+        (Vl(Values::Int(idx)), Vl(v)) => {
+            if idx >= 0 && idx < array.len() as i32 {
+                array.insert(idx as usize, v);
+                Vl(Values::Unit)
+            } else if idx >= array.len() as i32 {
+                array.push(v);
+                Vl(Values::Unit)
+            } else {
+                str_exn(IDX_BNDS)
+            }
+        },
+        _ => inv_arg("array::insert", None),
     }
 }
 
@@ -373,9 +383,6 @@ fn do_dot_ref_op(left: &Values, right: &Ast, scope: &mut impl Environment)
     -> Res 
 {
     match (left, right) {
-        (Values::Array(x), 
-            Ast::FnApply(name, vec)) if vec.is_empty() && name.eq("size") => 
-                Vl(Values::Int((*x).len() as i32)),
         (Values::Map(map), Ast::FnApply(fn_name, args)) 
             if fn_name.eq("contains") && !args.is_empty() =>
                 map_contains_all(map, args, scope),
@@ -398,6 +405,19 @@ fn do_dot_ref_op(left: &Values, right: &Ast, scope: &mut impl Environment)
             } else {
                 do_dot_ref_op(&*ptr.borrow(), rt, scope)
             },
+        (v, Ast::FnApply(fn_name, args)) => {
+            if let Some((ptr, _)) = scope.find(&fn_name[..]) {
+                if let f @ Values::Func(..) = &*ptr.borrow() {
+                    let mut vc = vec![v.clone()];
+                    eval_dot_args(args, scope, |val| -> Option<Res> {
+                        vc.push(val);
+                        None
+                    });
+                    return apply_function(f, vc, true);
+                }
+            }
+            bad_op(v, None, Op::Dot)
+        },
         (l, _) => bad_op(l, None, Op::Dot),
     }
 }
@@ -821,11 +841,18 @@ fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment
                 capture_into_scope(&*expr, scope, old_scope);
             }
         },
-        Ast::While(one, two) | Ast::Bop(one, _, two ) => {
+        Ast::While(one, two) | Ast::Bop(one, _, two ) 
+        | Ast::Try(one, _, two) => {
             capture_into_scope(one, scope, old_scope);
             capture_into_scope(two, scope, old_scope);
-        }
-        _ => (),
+        },
+        Ast::Map(children) => {
+            for (_, val) in children {
+                capture_into_scope(val, scope, old_scope);
+            }
+        },
+        Ast::Placeholder | Ast::VInt(_) | Ast::VStr(_)
+        | Ast::VBool(_) | Ast::VFloat(_) => (),
 
     }
 }
@@ -835,26 +862,35 @@ fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment
 fn eval_fn_app(func: &Values, args: &Vec<Box<Ast>>, scope: &mut impl Environment)
     -> Res
 {
-    if let f @ Values::Func(..) = func {
-        let mut val_args = Vec::<Values>::new();
-        let mut arg_scope = ImmuScope::from(scope);
-        for expr in args {
-            match eval(&*expr, &mut arg_scope) {
-                Vl(v) => val_args.push(v),
-                e => return e,
+    match func {
+        f @ Values::Func(..) => {
+            let mut val_args = Vec::<Values>::new();
+            let mut arg_scope = ImmuScope::from(scope);
+            for expr in args {
+                match eval(&*expr, &mut arg_scope) {
+                    Vl(v) => val_args.push(v),
+                    e => return e,
+                }
             }
-        }
-        apply_function(f, val_args, false)
-    } else {
-        str_exn(NFUNC)
+            apply_function(f, val_args, false)
+        },
+        Values::RustFunc(func) => {
+            let mut params = Vec::<Values>::new();
+            eval_dot_args(args, scope, |val| -> Option<Res> {
+                params.push(val);
+                None
+            });
+            func(params)
+        },
+        _ => str_exn(NFUNC),
     }
-
 }
 
 /// Evaluates the pipeline argument `left |> func`
 fn eval_pipeline(left: Values, func: Values) -> Res 
 {
     apply_function(&func, vec![left], true)
+    // TODO Make rust functions work with pipelining by modifying apply_function
 }  
 
 /// Applies `args` to the function `func`
@@ -980,78 +1016,6 @@ fn eval_try(body: &Ast, catch_var: &str, catch_body: &Ast, scope: &mut impl Envi
             scope.pop_scope();
             e
         },
-    }
-}
-
-/// Is true if `f_name` is the name of a hardcoded sapl function
-fn is_rust_func(f_name: &str) -> bool {
-    match f_name {
-        "typeof" | "assert" => true,
-        _ => false,
-    }
-}
-
-/// Evaluates a hardcoded function
-fn eval_rust_func(f_name: &str, args: &Vec<Box<Ast>>, scope: &mut impl Environment) -> Res {
-    match f_name {
-        "typeof" => eval_type(args, scope),
-        "assert" => eval_assert(args, scope),
-        _ => str_exn(NFUNC),
-    }
-}
-
-/// Evaluates typeof()
-fn eval_type(args: &Vec<Box<Ast>>, scope: &mut impl Environment) -> Res {
-    if args.len() == 1 {
-        match eval(&*args[0], scope) {
-           Vl(v) => Vl(Values::Str(type_of(&v))),
-           Res::Ret(v) => Vl(Values::Str(format!("return of {}", type_of(&v)))),
-           Res::Exn(v) => Vl(Values::Str(format!("exn of {}", type_of(&v)))),
-           b => b,
-        }
-    } else {
-        inv_arg("typeof", Some("expect 1 argument"))
-    }
-}
-
-/// Evaluates assert()
-fn eval_assert(args: &Vec<Box<Ast>>, scope: &mut impl Environment) -> Res {
-    if args.len() == 2 {
-        if let Vl(Values::Str(msg)) = eval(&*args[1], scope) {
-            match eval(&*args[0], scope) {
-                Vl(Values::Bool(true)) => Vl(Values::Unit),
-                Vl(Values::Bool(false)) => Bad(format!("Assertation error: '{}'", msg)),
-                _ => inv_arg("assert", Some("expects a boolean")),
-            }
-        } else {
-            inv_arg("assert", Some("expects an error message"))
-        }
-    } else if args.len() == 1 {
-        match eval(&*args[0], scope) {
-            Vl(Values::Bool(true)) => Vl(Values::Unit),
-            Vl(Values::Bool(false)) => Bad(format!("Assertation error")),
-            _ => inv_arg("assert", Some("expects a boolean")),
-        }
-    } else {
-        inv_arg("assert", Some("invalid arg count"))
-    }
-}
-
-/// Gets the string representation of the type of `v`
-fn type_of(v: &Values) -> String {
-    match v {
-        Values::Int(_) => "int".to_owned(),
-        Values::Bool(_) => "bool".to_owned(),
-        Values::Unit => "unit".to_owned(),
-        Values::Float(_) => "float".to_owned(),
-        Values::Str(_) => "string".to_owned(),
-        Values::Range(..) => "range".to_owned(),
-        Values::Tuple(x) => format!("tuple_{}", x.len()),
-        Values::Array(_) => "array".to_owned(),
-        Values::Map(_) => "map".to_owned(),
-        Values::Func(..) => "function".to_owned(),
-        Values::Placeholder => "partial app placeholder".to_owned(),
-        Values::Ref(..) => "ref".to_owned(),
     }
 }
 

@@ -524,11 +524,11 @@ mod tests {
         Values::Bool(true), Values::Int(20), 
         Values::Float(3.14)])));
 
-        assert_val_eq("[100, false, 'Hello'].size()", Values::Int(3));
+        assert_val_eq("len([100, false, 'Hello'])", Values::Int(3));
 
         assert_val_eq(r#"
         let lst = ["hello", 100, false, 'goodbye', 8.70];
-        (lst @ 100 @ 50 @ 80 @ 90).size()
+        len(lst @ 100 @ 50 @ 80 @ 90)
         "#, Values::Int(9));
 
         assert_val_eq(r#"
@@ -691,7 +691,7 @@ mod tests {
 
     fn try_test() {
         assert_val_eq(r#"
-        fun idiv x y{
+        fun idiv x y {
             try
                 x / y
             catch _:
@@ -889,7 +889,7 @@ mod tests {
        assert_val_eq(r#"
         let things = ['Keyboard', 'Mouse', 'Cable', 'Calculator', 'USB'];
         let t2 = &things;
-        t2.size()
+        len(t2)
         "#, Values::Int(5)); 
 
         assert_val_eq(r#"
@@ -946,6 +946,51 @@ mod tests {
         *(lst[0])
         "#, "3");
 
+        assert_sapl_eq(r#"
+        let var lst = [0, 1, 3, 5];
+        lst.insert(2, 'H');
+        lst.remove(0);
+        lst
+        "#, "[1, 'H', 3, 5]");
+
+        assert_sapl_eq(r#"
+        let var mp = {'id card': 5670811, name: 'Jim'};
+        mp.insert('married', true);
+        mp.remove('id card');
+        mp
+        "#, "{name: 'Jim', married: true}");
+
+
+    }
+
+    #[test]
+    fn hardcoded_tests() {
+        assert_sapl_eq(r#"
+        len({a: 'b', c: 'd'}) + len([3, 4, 5])
+        "#, 
+        "len('bad') + len(0..10) - 4 * len(true..3.14)");
+
+        assert_sapl_eq(r#"
+        let lst = [0, 1, 'Hello', 'Bye'];
+        let lst_len = len(lst);
+        for _ in lst {
+            assert(lst.contains(lst[random(lst_len)]))
+        }
+        true
+        "#, "true");
+
+        assert_val_eq("None", Values::Unit);
+
+        assert_sapl_eq(r#"
+        fun zdiv x y {
+            try
+                x / y
+            catch _:
+                0
+        }
+        let r = &20;
+        (40).zdiv(20) + r.zdiv(10)
+        "#, "4");
     }
 
     #[test]
