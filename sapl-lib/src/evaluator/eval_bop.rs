@@ -71,14 +71,16 @@ fn perform_dot_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> Res 
 fn perform_dot_lookup(val: Values, right: &Ast, scope: &mut impl Environment) -> Res {
     match right {
         Ast::FnApply(name, args) => {
-            do_if_some(lookup(&val, name, scope), |func| -> Res {
-                let mut params = vec![val];
-                eval_args(args, scope, |val| -> Option<Res> {
-                    params.push(val);
-                    None
-                });
-                apply_function(func, params, false, false)
-            }, name)
+            if let Ast::Name(name) = &**name {
+                do_if_some(lookup(&val, name, scope), |func| -> Res {
+                    let mut params = vec![val];
+                    eval_args(args, scope, |val| -> Option<Res> {
+                        params.push(val);
+                        None
+                    });
+                    apply_function(func, params, false, false)
+                }, name)
+            } else { panic!("Unknown fn apply in dot op {:?}", name) }
         },
         Ast::Name(name) => {
             do_if_some(lookup(&val, name, scope), |v| -> Res {
@@ -89,7 +91,7 @@ fn perform_dot_lookup(val: Values, right: &Ast, scope: &mut impl Environment) ->
                 }
             }, name)
         },
-        _ => panic!("Dot precedence invalid")
+        x => panic!("Dot precedence invalid. Got {:?}", x)
     }
 }
 

@@ -43,14 +43,12 @@ fn eval(ast: &Ast, scope: &mut impl Environment) -> Res {
         Ast::Func(name, params, ast, post) => 
             eval_func(name, params, &*ast, post, scope),
         Ast::Lambda(params, ast) => eval_lambda(params, &*ast, scope),
-        Ast::FnApply(name, args) => match scope.find(name) {
-            Some((val, _)) => eval_fn_app(&val.borrow(), args, &mut ImmuScope::from(scope)),
-            _ => ukn_name(name),
-        },
+        Ast::FnApply(left, args) => 
+            eval_fn_app(&*left, args, scope),
         Ast::Array(elems) => eval_arr(elems, scope),
         Ast::Uop(ast, op) => eval_uop(ast, op, scope),
         Ast::Tuple(elems) => eval_tuple(elems, scope),
-        Ast::Map(es) => eval_map(es, scope),
+        Ast::Map(es) => eval_map(&*es, scope),
         Ast::Try(body, var, catch) => eval_try(&*body, &var[..], &*catch, scope),
         Ast::For(vars, iter, if_expr, body) => eval_for(vars, &*iter, if_expr, &*body, scope),
         Ast::While(guard, body) => eval_while(&*guard, &*body, scope),
@@ -160,13 +158,17 @@ fn eval_tuple(elems: &Vec<Box<Ast>>, scope: &mut impl Environment) -> Res {
 }
 
 /// Evaluates a map
-fn eval_map(es: &HashMap<String, Box<Ast>>, scope: &mut impl Environment) -> Res {
+fn eval_map(es: &Vec<(Ast, Ast)>, scope: &mut impl Environment) -> Res {
     let mut map = HashMap::<String, Values>::new();
     for (k, v) in es {
-        match eval(v, scope) {
-            Vl(val) => map.insert(k.clone(), val),
-            e => return e,
-        };
+        match (eval(k, scope), eval(v, scope)) {
+            (Vl(Values::Str(nm)), Vl(val)) => {
+                map.insert(nm, val); ()
+            },
+            (Vl(_), _) => 
+                return inv_arg("map", Some("Map keys must be strings")),
+            (e, _) => return e,
+        }
     }
     Vl(Values::Map(Box::new(map)))
 }

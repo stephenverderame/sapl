@@ -352,7 +352,7 @@ mod tests {
         "#, Values::Int(10));
 
         assert_parse_str_eq("3 * func(3)", Ast::Bop(Box::new(Ast::VInt(3)), Op::Mult, 
-            Box::new(Ast::FnApply("func".to_owned(), vec![Box::new(Ast::VInt(3))]))));
+            Box::new(Ast::FnApply(Box::new(Ast::Name("func".to_owned())), vec![Box::new(Ast::VInt(3))]))));
 
         assert_val_eq(r#"
         fun fact x {
@@ -421,7 +421,7 @@ mod tests {
 
         assert_parse_str_eq("let add10 = add(10, ?)", 
             Ast::Let(vec![("add10".to_owned(), false)], Box::new(
-                Ast::FnApply("add".to_owned(), 
+                Ast::FnApply(Box::new(Ast::Name("add".to_owned())), 
                 vec![Box::new(Ast::VInt(10)), Box::new(Ast::Placeholder)]))
         ));
 
@@ -475,7 +475,7 @@ mod tests {
             Box::new(Ast::Bop(
                 Box::new(Ast::VInt(5)),
                 Op::Pipeline,
-                Box::new(Ast::FnApply("sub".to_owned(), vec![Box::new(Ast::Placeholder),
+                Box::new(Ast::FnApply(Box::new(Ast::Name("sub".to_owned())), vec![Box::new(Ast::Placeholder),
                     Box::new(Ast::VInt(3))]))
             )), 
             Op::Pipeline, 
@@ -601,6 +601,12 @@ mod tests {
         countdown(10)
         "#
         , Values::Int(55));
+
+        assert_sapl_eq(r#"
+        let y = (fun (x y) x * y)(20, 5);
+        let fx = (fun (x y) x + y)(?, 2);
+        fx(y)
+        "#, "102");
     }
 
     #[test]
@@ -623,14 +629,14 @@ mod tests {
         let mut m = HashMap::<String, Values>::new();
         m.insert("name".to_owned(), Values::Str("Billy".to_owned()));
         m.insert("age".to_owned(), Values::Int(53));
-        assert_val_eq("{name: 'Billy', 'age': 53 }", Values::Map(Box::new(m)));
+        assert_val_eq("{'name': 'Billy', 'age': 53 }", Values::Map(Box::new(m)));
 
         assert_val_eq(r#"
         let map = {
-            name: 'Jill',
-            aliases: ('J', 'Jillian'),
-            age: 20,
-            speak: fun (name nicks age) {
+            'name': 'Jill',
+            'aliases': ('J', 'Jillian'),
+           'age': 20,
+            'speak': fun (name nicks age) {
                 let n1, n2 = nicks;
                 "Hello, my name is " + name
                 + ", but you can call me " + n1 
@@ -656,7 +662,7 @@ mod tests {
         "#, Values::Str("Alex 19".to_owned()));
 
         assert_val_eq(r#"
-        let map = {address: '333 East Valley Road'};
+        let map = {'address': '333 East Valley Road'};
         let map = map @ [('name', 'Alex'), ('age', 19)];
         if map.contains('address', 'name'):
             map.contains('age', 'ssn')
@@ -665,8 +671,8 @@ mod tests {
         "#, Values::Bool(false));
 
         assert_val_eq(r#"
-        let map = {address: '333 East Valley Road'};
-        let map = map @ { house_color: 'red', car: 'volvo' };
+        let map = {'address': '333 East Valley Road'};
+        let map = map @ { 'house' + '_color': 'red', 'car': 'volvo' };
         map['house_color']
         "#, Values::Str("red".to_owned()));
     }
@@ -790,7 +796,7 @@ mod tests {
             person['name']
         }
 
-        let p = {name: "Jackson", age: 10};
+        let p = {'name': "Jackson", 'a' + 'ge': 10};
         meet(p)
         "#, Values::Str("Jackson".to_owned()));
 
@@ -960,14 +966,12 @@ mod tests {
         mp.remove('id card');
         mp
         "#, "{name: 'Jim', married: true}");
-
-
     }
 
     #[test]
     fn hardcoded_tests() {
         assert_sapl_eq(r#"
-        len({a: 'b', c: 'd'}) + len([3, 4, 5])
+        len({'a': 'b', 'c': 'd'}) + len([3, 4, 5])
         "#, 
         "len('bad') + len(0..10) - 4 * len(true..3.14)");
 
@@ -982,7 +986,6 @@ mod tests {
 
         assert_val_eq("None", Values::Unit);
 
-        // PROBLEM
         assert_sapl_eq(r#"
         fun zdiv x y {
             try x / y
@@ -1027,8 +1030,7 @@ mod tests {
 
         assert_sapl_eq(r#"
         let lst = [23, 100, 'G'];
-        let f = lst.contains;
-        'G' |> f
+        'G' |> lst.contains
         "#, "true");
 
         assert_sapl_eq(r#"
@@ -1047,6 +1049,31 @@ mod tests {
         a_push_front(30);
         a
         "#, "[30, 20, 10]");
+
+        assert_sapl_eq(r#"
+        let lst = [&fun (x) x + x, fun (x) x * x, &fun (x) x ** x];
+        lst[0](5) + lst[1](2)
+        "#, "14");
+
+        assert_sapl_eq(r#"
+        let lst = [[3, 2], [4, 3], [5, 4]];
+        lst[0][1]
+        "#, "2");
+
+        
+    }
+
+    #[test]
+    fn more_ref_tests() {
+        assert_sapl_eq(r#"
+        let func = &fun (x) x + 200;
+        func(200)
+        "#, "400");
+
+        assert_sapl_eq(r#"
+        let func = &fun (x) x + 200;
+        func(200)
+        "#, "400");
     }
 
     #[test]

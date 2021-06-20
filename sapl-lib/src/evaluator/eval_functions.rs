@@ -71,10 +71,8 @@ fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment
                 capture_into_scope(&*ast, scope, old_scope);
             }
         },
-        Ast::FnApply(name, args) => {
-            if let Some((val, mtble)) = old_scope.find(name) {
-                scope.add(name.to_string(), val.borrow().clone(), mtble);
-            }
+        Ast::FnApply(func, args) => {
+            capture_into_scope(&*func, scope, old_scope);
             for expr in args {
                 capture_into_scope(&*expr, scope, old_scope);
             }
@@ -85,8 +83,9 @@ fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment
             capture_into_scope(two, scope, old_scope);
         },
         Ast::Map(children) => {
-            for (_, val) in children {
+            for (key, val) in &**children {
                 capture_into_scope(val, scope, old_scope);
+                capture_into_scope(key, scope, old_scope);
             }
         },
         Ast::Placeholder | Ast::VInt(_) | Ast::VStr(_)
@@ -97,15 +96,27 @@ fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment
 
 /// Evaluates a function application
 /// Requires arguments are expressions that do no modify any values in the scope
-pub fn eval_fn_app(func: &Values, args: &Vec<Box<Ast>>, scope: &mut impl Environment)
+pub fn eval_fn_app(func: &Ast, args: &Vec<Box<Ast>>, scope: &mut impl Environment)
     -> Res
 {
+    let func = match func {
+        Ast::Name(nm) => {
+            match scope.find(nm) {
+                Some((ptr, _)) => ptr.clone(),
+                _ => return ukn_name(nm),
+            }
+        },
+        f => match eval(f, scope) {
+            Vl(v) => Rc::new(RefCell::new(v)),
+            e => return e,
+        },
+    };
     let mut val_args = Vec::<Values>::new();
     eval_args(args, scope, |val| -> Option<Res> {
         val_args.push(val);
         None
     });
-    apply_function(func, val_args, false, false)
+    let x = apply_function(&func.borrow(), val_args, false, false); x
 
 }
 

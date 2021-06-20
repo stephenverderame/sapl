@@ -4,6 +4,7 @@ use super::parse_expr;
 use super::Ast;
 use super::Op;
 use super::consume;
+use super::parse_func;
 
 /// True if `tok` is a binary operator
 /// False otherwise
@@ -64,7 +65,8 @@ pub fn parse_bop(left: Ast, parent: Option<i32>, stream: &mut VecDeque<Tokens>)
 /// Ie. the index operator `lst[i]`
 pub fn tok_is_post_uop(tok: &Tokens) -> bool {
     match *tok {
-        Tokens::LBracket | Tokens::OpQ => true,
+        Tokens::LBracket | Tokens::OpQ 
+        | Tokens::LParen => true,
         _ => false,
     }
 }
@@ -86,11 +88,18 @@ pub fn tok_is_pre_uop(tok: &Tokens) -> bool {
 pub fn parse_post_uop(left: Ast, stream: &mut VecDeque<Tokens>)
     -> Result<Ast, String>
 {
+    let op =
     match stream.pop_front() {
         Some(Tokens::LBracket) => parse_index_op(left, stream),
         Some(Tokens::OpQ) => Ok(Ast::Uop(Box::new(left), Op::AsBool)),
+        Some(Tokens::LParen) => parse_func::parse_fn_apply(left, stream),
         e => Err(format!("Unexpected post UOP token {:?}", e)),
-    }
+    };
+    if op.is_ok() && stream.front() != None && 
+            tok_is_post_uop(&stream.front().unwrap()) 
+    {
+        parse_post_uop(op.unwrap(), stream)
+    } else { op }
 }
 
 /// Parses a pre value uop
@@ -98,13 +107,12 @@ pub fn parse_post_uop(left: Ast, stream: &mut VecDeque<Tokens>)
 pub fn parse_pre_uop(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
     let op = tok_to_op(stream.front().unwrap(), true).unwrap();
     let prec = precedence(op);
-    println!("Uop {:?}", op);
     consume(stream);
     let right = 
     match stream.front() {
-        Some(Tokens::LParen) | Some(Tokens::Name(_)) => parse_expr(stream, Some(prec)),
         Some(x) if tok_is_pre_uop(x) => parse_expr(stream, Some(prec)),
         Some(x) if tok_is_val(x) => parse_expr(stream, Some(prec)),
+        Some(_) => parse_expr(stream, Some(prec)),
         x => return Err(format!("Unexpected {:?} after Uop", x)),
     };
     match right {

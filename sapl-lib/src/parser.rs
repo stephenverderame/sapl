@@ -1,6 +1,5 @@
 use crate::lexer::Tokens;
 use std::collections::VecDeque;
-use std::collections::HashMap;
 mod parse_op;
 use parse_op::*;
 mod parse_control;
@@ -34,12 +33,12 @@ pub enum Ast {
     Name(String),
     Func(String, Vec<String>, Box<Ast>, Option<Box<Ast>>),
     Lambda(Vec<String>, Box<Ast>),
-    FnApply(String, Vec<Box<Ast>>),
+    FnApply(Box<Ast>, Vec<Box<Ast>>),
     Array(Vec<Box<Ast>>),
     Tuple(Vec<Box<Ast>>),
     Placeholder,
     Uop(Box<Ast>, Op),
-    Map(HashMap<String, Box<Ast>>),
+    Map(Box<Vec<(Ast, Ast)>>),
     Try(Box<Ast>, String, Box<Ast>),
     For(Vec<String>, Box<Ast>, Option<Box<Ast>>, Box<Ast>),
     While(Box<Ast>, Box<Ast>),
@@ -112,7 +111,7 @@ fn parse_expr(stream: &mut VecDeque<Tokens>, parent_precedence: Option<i32>) -> 
             match parse_post_uop(left.unwrap(), stream) {
                 Ok(ast) => parse_bop(ast, parent_precedence, stream),
                 e => e,
-            }
+            },
         _ => left,
     }
 }
@@ -243,28 +242,27 @@ fn consume(stream: &mut VecDeque<Tokens>) -> &mut VecDeque<Tokens> {
 /// Parses a map
 /// Requires the first brace has been consumed
 fn parse_map(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
-    let mut map = HashMap::<String, Box<Ast>>::new();
+    let mut map = Vec::<(Ast, Ast)>::new();
     loop {
-        match stream.pop_front() {
-            Some(Tokens::Name(x)) | Some(Tokens::TString(x)) => {
-                if Some(Tokens::Colon) != stream.pop_front() { 
-                    return Err("Map missing colon after name".to_owned());
-                }
-                match parse_expr(stream, None) {
-                    Ok(val) => map.insert(x, Box::new(val)),
-                    e => return e,
-                };
-                if Some(&Tokens::Comma) != stream.front() { break; }
-                else { consume(stream); }
-            },
-            Some(Tokens::RBrace) => return Ok(Ast::Map(map)),
-            x => return Err(format!("Unexpected token {:?} when parsing map", x)),
+        if stream.front() == Some(&Tokens::RBrace) { break; }
+        let key = match parse_expr(stream, None) {
+            Ok(ast) => ast,
+            e => return e,
+        };
+        if Some(Tokens::Colon) != stream.pop_front() { 
+            return Err("Map missing colon after name".to_owned());
         }
+        match parse_expr(stream, None) {
+            Ok(val) => map.push((key, val)),
+            e => return e,
+        };
+        if Some(&Tokens::Comma) != stream.front() { break; }
+        else { consume(stream); }
     }
     if Some(Tokens::RBrace) != stream.pop_front() {
         Err("Map missing closing brace".to_owned())
     } else {
-        Ok(Ast::Map(map))
+        Ok(Ast::Map(Box::new(map)))
     }
 }
 
