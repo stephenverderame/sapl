@@ -9,6 +9,9 @@ use std::collections::HashMap;
 use crate::parser::Op;
 use crate::evaluator::{Environment, ImmuScope};
 use super::vals::eval_args;
+use super::eval_functions::apply_function;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// Evaluates `left op right`
 /// If `op` is a short circuit operator, only evaluates `left` if the short circuit path is taken
@@ -47,23 +50,81 @@ fn perform_dot_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> Res 
     if let Ast::Name(x) = left {
         match scope.find(x) {
             Some((v, nm_mut)) => {
-                let mut sub_scope = ImmuScope::from(scope);
-                if nm_mut {
-                    do_dot_mut_ref_op(&mut v.borrow_mut(), right, scope)
-                } else {
-                    do_dot_ref_op(&v.borrow(), right, &mut sub_scope)
-                }
+                match &*v.borrow() {
+                    Values::Ref(ptr, mt) => 
+                        return perform_dot_lookup(Values::Ref(ptr.clone(), *mt), right, scope),
+                    _ => (),
+                };
+                let rf = Values::Ref(v.clone(), nm_mut);
+                perform_dot_lookup(rf, right, scope)
             },
             None => return ukn_name(x),
         }
     } else {
         match eval(left, scope) {
-            Vl(Values::Ref(r, _)) => do_dot_ref_op(&r.borrow(), right, scope),
-            Vl(v) => do_dot_mv_op(v, right, scope),
+            Vl(v) => perform_dot_lookup(v, right, scope),
             e => return e,
         }
     }
 }
+
+fn perform_dot_lookup(val: Values, right: &Ast, scope: &mut impl Environment) -> Res {
+    match right {
+        Ast::FnApply(name, args) => {
+            do_if_some(lookup(&val, name, scope), |func| -> Res {
+                let mut params = vec![val];
+                eval_args(args, scope, |val| -> Option<Res> {
+                    params.push(val);
+                    None
+                });
+                apply_function(func, params, false, false)
+            }, name)
+        },
+        Ast::Name(name) => {
+            do_if_some(lookup(&val, name, scope), |v| -> Res {
+                match v {
+                    f @ Values::Func(..) | f @ Values::RustFunc(..) => 
+                        apply_function(f, vec![val], true, true),
+                    v => Vl(v.clone()),
+                }
+            }, name)
+        },
+        _ => panic!("Dot precedence invalid")
+    }
+}
+
+/// Looks up `name` in the context of `val`
+fn lookup(val: &Values, name: &String, scope: &mut impl Environment) 
+    -> Option<Rc<RefCell<Values>>> 
+{
+    let class_name = &super::std_sapl::type_of(val)[..];
+    let class_name_no_details = if class_name.find(|c| { c == '_' }) != None {
+        &class_name[0..class_name.find(|c| { c == '_' }).unwrap()]
+    } else {
+        class_name
+    };
+    let class_func_name = format!("{}::{}", class_name_no_details, name);
+    if let Some((ptr, _)) = scope.find(&class_func_name[..]) {    
+        Some(ptr)
+    } else if let Some((ptr, _)) = scope.find(&name[..]) {
+        Some(ptr)
+    } else {
+        None
+    }
+}
+
+/// Executes `func` if the lookup was successful
+/// `fn_name` - the name of the function looked up (for debugging purposes)
+fn do_if_some<T, F>(maybe: Option<Rc<RefCell<T>>>, func: F, fn_name: &String) -> Res 
+    where F : FnOnce(&T) -> Res
+{
+    if let Some(t) = maybe {
+        func(&t.borrow())
+    } else {
+        ukn_name(fn_name)
+    }
+}
+
 
 
 /// Performs the assignment `left = right`.
@@ -122,180 +183,6 @@ fn perform_update_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> R
     }
 }
 
-/// Performs the dot operator on a mutable reference
-fn do_dot_mut_ref_op(mut left: &mut Values, right: &Ast, scope: &mut impl Environment) -> Res {
-    match (&mut left, right) {
-        (Values::Array(x),
-            Ast::FnApply(name, args)) if name.eq("push_back") && !args.is_empty() => 
-            eval_args(args, scope, |val| -> Option<Res> { 
-                (*x).push(val); 
-                None 
-            }),
-        (Values::Array(x),
-            Ast::FnApply(name, args)) if name.eq("set") && args.len() == 2 => 
-                array_set(&mut *x, args, scope),
-        (Values::Array(x),
-            Ast::FnApply(name, args)) if name.eq("insert") && args.len() == 2 =>
-                array_insert(&mut *x, args, scope),
-        (Values::Array(x),
-            Ast::FnApply(name, args)) if name.eq("remove") && !args.is_empty() =>
-                eval_args(args, scope, |val| {
-                    if let Values::Int(v) = val {
-                        if v >= 0 && v < x.len() as i32 {
-                            x.remove(v as usize);
-                        } 
-                        None
-                    } else {
-                        Some(inv_arg("array::remove", None))
-                    }
-                }),
-        (Values::Map(mp),
-            Ast::FnApply(name, args)) if name.eq("insert") && !args.is_empty() =>
-                map_insert(mp, args, scope),
-        (Values::Map(mp),
-                Ast::FnApply(name, args)) if name.eq("remove") && !args.is_empty() =>
-                    eval_args(args, scope, |val| {
-                        if let Values::Str(v) = val {
-                            mp.remove(&v);
-                            None
-                        } else {
-                            Some(inv_arg("map::remove", None))
-                        }
-                    }),
-        (Values::Ref(ptr, ptr_mut), rt) => 
-            if *ptr_mut {
-                do_dot_mut_ref_op(&mut ptr.borrow_mut(), rt, scope)
-            } else {
-                do_dot_ref_op(&*ptr.borrow(), rt, scope)
-            },
-        (l, r) => do_dot_ref_op(l, r, scope),
-    }
-}
-
-/// Requires `args` has 2 elements
-fn array_set(array: &mut Vec<Values>, args: &Vec<Box<Ast>>, scope: &mut impl Environment) -> Res {
-    match (eval(&*args[0], scope), eval(&*args[1], scope)) {
-        (Vl(Values::Int(idx)), Vl(v)) => {
-            if idx >= 0 && idx < array.len() as i32 {
-                array[idx as usize] = v;
-                Vl(Values::Unit)
-            } else {
-                str_exn(IDX_BNDS)
-            }
-        },
-        _ => inv_arg("array::set", None),
-    }
-}
-
-fn array_insert(array: &mut Vec<Values>, args: &Vec<Box<Ast>>, scope: &mut impl Environment) -> Res {
-    match (eval(&*args[0], scope), eval(&*args[1], scope)) {
-        (Vl(Values::Int(idx)), Vl(v)) => {
-            if idx >= 0 && idx < array.len() as i32 {
-                array.insert(idx as usize, v);
-                Vl(Values::Unit)
-            } else if idx >= array.len() as i32 {
-                array.push(v);
-                Vl(Values::Unit)
-            } else {
-                str_exn(IDX_BNDS)
-            }
-        },
-        _ => inv_arg("array::insert", None),
-    }
-}
-
-fn map_insert(map: &mut HashMap<String, Values>, args: &Vec<Box<Ast>>, 
-    scope: &mut impl Environment) -> Res 
-{
-    if args.len() == 1 {
-        match eval(&*args[0], scope) {
-            Vl(Values::Tuple(mut x)) if x.len() == 2 => {
-                match (x.swap_remove(0), x.pop().unwrap()) {
-                    (Values::Str(x), val) => {
-                        map.insert(x, val);
-                        Vl(Values::Unit)
-                    },
-                    _ => inv_arg("map::insert",
-                        Some("Inserting tuple must be a string value pair")),
-                }
-            },
-            Vl(_) => inv_arg("map::insert", None),
-            e => e,
-        }
-    }
-    else if args.len() == 2 {
-        match (eval(&*args[0], scope), eval(&*args[1], scope)) {
-            (Vl(Values::Str(key)), Vl(val)) => {
-                map.insert(key, val);
-                Vl(Values::Unit)
-            },
-            (Vl(_), _) => inv_arg("map::insert", 
-                Some("Can only insert kv pairs into a map")),
-            (e, _) => e,
-
-        }
-    } else {
-        inv_arg("map::insert", Some("Must insert a key/value pair!"))
-    }
-}
-
-
-/// Performs a dot operation on a value
-fn do_dot_ref_op(left: &Values, right: &Ast, scope: &mut impl Environment) 
-    -> Res 
-{
-    match (left, right) {
-        (Values::Map(map), Ast::FnApply(fn_name, args)) 
-            if fn_name.eq("contains") && !args.is_empty() =>
-                map_contains_all(map, args, scope),
-        (Values::Array(x), Ast::FnApply(fn_name, args)) 
-                if fn_name.eq("contains") && !args.is_empty() =>
-                    arr_contains_all(x, args, scope),
-        (Values::Map(map), Ast::Name(nm)) if map.contains_key(nm) =>
-            Vl(map.get(nm).unwrap().clone()),
-        (Values::Range(fst, _),
-            Ast::FnApply(name, vec)) if name.eq("fst") && vec.is_empty() =>
-                Vl(*fst.clone()),
-        (Values::Range(_, snd),
-            Ast::FnApply(name, vec)) if name.eq("snd") && vec.is_empty() =>
-                Vl(*snd.clone()),
-        (Values::Map(map), Ast::FnApply(fn_name, args)) if map.contains_key(fn_name) =>
-            super::eval_fn_app(&map.get(fn_name).unwrap(), args, scope),
-        (Values::Ref(ptr, ptr_mut), rt) => 
-            if *ptr_mut {
-                do_dot_mut_ref_op(&mut ptr.borrow_mut(), rt, scope)
-            } else {
-                do_dot_ref_op(&*ptr.borrow(), rt, scope)
-            },
-        (v, Ast::FnApply(fn_name, args)) => {
-            if let Some((ptr, _)) = scope.find(&fn_name[..]) {
-                let f = &*ptr.borrow();
-                let mut vc = vec![v.clone()];
-                eval_args(args, scope, |val| -> Option<Res> {
-                    vc.push(val);
-                    None
-                });
-                return super::eval_functions::apply_function(&f, vc, true);
-            }
-            bad_op(v, None, Op::Dot)
-        },
-        (l, _) => bad_op(l, None, Op::Dot),
-    }
-}
-
-/// Performs a dot operation on a moveable value
-fn do_dot_mv_op(left: Values, right: &Ast, scope: &mut impl Environment) -> Res {
-    match (left, right) {
-        (Values::Range(fst, _),
-            Ast::FnApply(name, vec)) if name.eq("fst") && vec.is_empty() =>
-                Vl(*fst),
-        (Values::Range(_, snd),
-            Ast::FnApply(name, vec)) if name.eq("snd") && vec.is_empty() =>
-                Vl(*snd),
-        (mut l, r) => do_dot_mut_ref_op(&mut l, r, scope),
-    }
-}
-
 /// Performs the concatenation operator `left @ right`
 fn perform_concat(left: Values, right: Values) -> Res {
     match (left, right) {
@@ -349,37 +236,6 @@ fn map_concat_array(mut map: HashMap<String, Values>,
     Vl(Values::Map(Box::new(map)))
 }
 
-/// Returns a boolean value if `map` contains all values in `args` once
-/// `args` is evaluated
-fn map_contains_all(map: &HashMap<String, Values>, args: &Vec<Box<Ast>>,
-    scope: &mut impl Environment) -> Res
-{
-    for e in args {
-        match eval(&*e, scope) {
-            Vl(Values::Str(name)) => if map.get(&name) == None {
-                return Vl(Values::Bool(false));
-            },
-            Vl(_) => return inv_arg("map::contains", None),
-            e => return e,
-        }
-    };
-    Vl(Values::Bool(true))
-}
-
-/// True if `arr` contains all of the vales from the evaluated asts in `args`
-fn arr_contains_all(arr: &Vec<Values>, args: &Vec<Box<Ast>>,
-    scope: &mut impl Environment) -> Res
-{
-    for e in args {
-        match eval(&*e, scope) {
-            Vl(x) => if arr.iter().find(|bx| {**bx == x}) == None {
-                return Vl(Values::Bool(false));
-            },
-            e => return e,
-        }
-    };
-    Vl(Values::Bool(true))
-}
 
 /// Indexes `left[right]` where `left` is a name
 fn perform_name_index_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> Res {
@@ -552,5 +408,5 @@ fn promote_args(a: Values, b: Values, op: &Op) -> (Values, Values) {
 /// Evaluates the pipeline argument `left |> func`
 fn eval_pipeline(left: Values, func: Values) -> Res 
 {
-    super::eval_functions::apply_function(&func, vec![left], true)
+    super::eval_functions::apply_function(&func, vec![left], true, false)
 }  

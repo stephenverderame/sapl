@@ -6,7 +6,7 @@ use std::cell::RefCell;
 
 
 
-pub trait Environment {
+pub trait Environment: std::fmt::Debug {
     /// Gets a value stored in this environment with the name `x`
     fn find(&self, name: &str) -> Option<(Rc<RefCell<Values>>, bool)>;
 
@@ -111,6 +111,7 @@ impl Environment for Scope {
 /// Handles the pushing and popping of the scope stack in its "constructor" and
 /// "destructor"
 /// RAII for `new_scope` and `pop_scope`
+#[derive(Debug)]
 pub struct ScopeProxy<'a> {
     scope: &'a mut dyn Environment,
 }
@@ -162,6 +163,7 @@ impl<'a> Environment for ScopeProxy<'a> {
 /// a mutable, data owning, child scope
 /// Basically strings together an immutable and owned environment into 
 /// one environment
+#[derive(Debug)]
 pub struct ImmuScope<'a> {
     parent: &'a dyn Environment,
     children: Scope,

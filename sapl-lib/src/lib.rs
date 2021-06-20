@@ -638,7 +638,8 @@ mod tests {
                 + " years old."
             }
         };
-        map.speak(map.name, map.aliases, map.age)
+        let speak = map['speak'];
+        speak(map['name'], map['aliases'], map['age'])
         "#, Values::Str("Hello, my name is Jill, but you can call me J or Jillian. I am 20 years old.".to_owned()));
 
         assert_val_eq(r#"
@@ -651,7 +652,7 @@ mod tests {
         assert_val_eq(r#"
         let map = {};
         let map = map @ ('name', 'Alex') @ ('age', 19);
-        map.name + " " + map['age']
+        map['name'] + " " + map['age']
         "#, Values::Str("Alex 19".to_owned()));
 
         assert_val_eq(r#"
@@ -666,7 +667,7 @@ mod tests {
         assert_val_eq(r#"
         let map = {address: '333 East Valley Road'};
         let map = map @ { house_color: 'red', car: 'volvo' };
-        map.house_color
+        map['house_color']
         "#, Values::Str("red".to_owned()));
     }
 
@@ -786,7 +787,7 @@ mod tests {
         }
 
         fun meet person -> valid_name(string) {
-            person.name
+            person['name']
         }
 
         let p = {name: "Jackson", age: 10};
@@ -981,20 +982,71 @@ mod tests {
 
         assert_val_eq("None", Values::Unit);
 
+        // PROBLEM
         assert_sapl_eq(r#"
         fun zdiv x y {
-            try
-                x / y
-            catch _:
-                0
+            try x / y
+            catch _: 0
         }
         let r = &20;
-        (40).zdiv(20) + r.zdiv(10)
+        (40).zdiv(20) + (*r).zdiv(10)
         "#, "4");
 
         assert_sapl_eq(r#"
         ([10, 20, 30] |> len) + [0, 1, 2].len()
         "#, "6");
+    }
+
+    #[test]
+    fn dot_test() {
+        assert_sapl_eq(r#"
+        let var lst = [4, 3, 2];
+        lst.push_back(10);
+        lst[lst.len() - 1]
+        "#, "10");
+
+        assert_sapl_eq(r#"
+        let var lst = [4, 3, 2];
+        lst.push_back(10, 'Hello');
+        lst
+        "#, "[4, 3, 2, 10, 'Hello']");
+
+        assert_sapl_eq(r#"
+        let var lst = [4, 3, 2];
+        lst.insert(0, 'G');
+        lst.set(1, 5);
+        lst[0..3]
+        "#, "['G', 5, 3]");
+
+        assert_sapl_eq(r#"
+        let var mp = {};
+        mp.insert(('key', 3));
+        mp.insert('key2', 4);
+        mp['key'] + mp['key2']
+        "#, "7");
+
+        assert_sapl_eq(r#"
+        let lst = [23, 100, 'G'];
+        let f = lst.contains;
+        'G' |> f
+        "#, "true");
+
+        assert_sapl_eq(r#"
+        let push5 = fun (x) x.push_back(5);
+        let var ar = [];
+        push5(&&ar);
+        push5(&&ar);
+        ar
+        "#, "[5, 5]");
+
+        assert_sapl_eq(r#"
+        let var a = [];
+        let a_push_front = a.insert(0, ?);
+        a_push_front(10);
+        a_push_front(20);
+        a_push_front(30);
+        a
+        "#, "[30, 20, 10]");
     }
 
     #[test]

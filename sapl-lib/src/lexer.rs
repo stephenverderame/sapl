@@ -362,7 +362,7 @@ impl TokenizerFSM {
     }
 
     fn is_name_character(c: u8) -> bool {
-        c.is_ascii_alphanumeric() || c == b'_'
+        c.is_ascii_alphanumeric() || c == b'_' || c == b':'
     }
 
     fn parse_cur_as_name(&self) -> Option<Tokens> {
