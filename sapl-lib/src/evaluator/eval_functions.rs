@@ -88,6 +88,7 @@ fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment
                 capture_into_scope(key, scope, old_scope);
             }
         },
+        Ast::Struct(..) => (), //TODO
         Ast::Placeholder | Ast::VInt(_) | Ast::VStr(_)
         | Ast::VBool(_) | Ast::VFloat(_) => (),
 

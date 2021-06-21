@@ -21,6 +21,7 @@ pub enum Tokens {
     Return, Throw, Try, Catch,
     Rightarrow, Var, While,
     Leftarrow,
+    Def, Pub, Struct,
 }
 
 /// Converts an input stream into a deque of tokens
@@ -381,6 +382,9 @@ impl TokenizerFSM {
             "in" => Some(Tokens::In),
             "var" => Some(Tokens::Var),
             "while" => Some(Tokens::While),
+            "struct" => Some(Tokens::Struct),
+            "pub" => Some(Tokens::Pub),
+            "def" => Some(Tokens::Def),
             x => Some(Tokens::Name(x.to_owned())),
         }
     }

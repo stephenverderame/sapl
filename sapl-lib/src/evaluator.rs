@@ -53,6 +53,7 @@ fn eval(ast: &Ast, scope: &mut impl Environment) -> Res {
         Ast::For(vars, iter, if_expr, body) => eval_for(vars, &*iter, if_expr, &*body, scope),
         Ast::While(guard, body) => eval_while(&*guard, &*body, scope),
         Ast::Placeholder => Vl(Values::Placeholder),
+        Ast::Struct(_) => Bad("Unimplemented".to_owned()),
     }
 }
 

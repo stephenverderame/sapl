@@ -367,6 +367,7 @@ mod tests {
 
     #[test]
     fn recursion_test() {
+        // CHECK
         assert_val_eq(r#"
         fun summation start end {
             fun sum_helper i {
@@ -378,8 +379,8 @@ mod tests {
             sum_helper(start)
         }
 
-        summation(0, 100)
-        "#, Values::Int(5050));
+        summation(0, 50)
+        "#, Values::Int(1275));
     }
 
     #[test]
@@ -961,11 +962,11 @@ mod tests {
         "#, "[1, 'H', 3, 5]");
 
         assert_sapl_eq(r#"
-        let var mp = {'id card': 5670811, name: 'Jim'};
+        let var mp = {'id card': 5670811, 'name': 'Jim'};
         mp.insert('married', true);
         mp.remove('id card');
         mp
-        "#, "{name: 'Jim', married: true}");
+        "#, "{'name': 'Jim', 'married': true}");
     }
 
     #[test]
@@ -1074,6 +1075,44 @@ mod tests {
         let func = &fun (x) x + 200;
         func(200)
         "#, "400");
+    }
+    #[test]
+    fn struct_tests() {
+        let st = 
+        crate::parser::SaplStruct {
+            name: "Person".to_owned(),
+            ctor: Some(Box::new(
+                Ast::Func("Person".to_owned(), vec!["name".to_owned()],
+                    Box::new(Ast::VInt(0)), None)
+            )),
+            dtor: Some(Box::new(
+                Ast::Func("Person_dtor".to_owned(), Vec::<String>::new(),
+                    Box::new(Ast::VInt(0)), None)
+            )),
+            publics: vec![("name".to_owned(), false, None),
+                ("age".to_owned(), true, Some(Box::new(Ast::VInt(0)))),
+                ("hello".to_owned(), false, Some(Box::new(Ast::Func(
+                    "hello".to_owned(), Vec::<String>::new(), Box::new(Ast::VInt(0)), None))))],
+            privates: vec![("ssn".to_owned(), false, None)],
+        };
+        assert_parse_str_eq(r#"
+        struct Person {
+            def ssn
+            pub def name, var age = 0
+
+            fun Person name {
+                0
+            }
+
+            fun Person_dtor {
+                0
+            }
+
+            pub fun hello {
+                0
+            }
+        }
+        "#, Ast::Struct(st));
     }
 
     #[test]
