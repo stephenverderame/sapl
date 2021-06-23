@@ -90,7 +90,7 @@ impl Environment for Scope {
         for map in &mut self.names {
             match map.get_mut(name) {
                 Some((v, true)) => {
-                    *v = Rc::new(RefCell::new(val));
+                    *v.borrow_mut() = val;
                     return true;
                 },
                 Some((_, false)) => return false,

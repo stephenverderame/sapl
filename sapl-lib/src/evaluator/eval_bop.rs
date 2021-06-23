@@ -50,18 +50,7 @@ pub fn eval_bop(left: &Ast, op: &Op, right: &Ast, scope: &mut impl Environment) 
 /// `left` can be a name, reference, named reference, or any other value
 fn perform_dot_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> Res {
     if let Ast::Name(x) = left {
-        match scope.find(x) {
-            Some((v, nm_mut)) => {
-                match &*v.borrow() {
-                    Values::Ref(ptr, mt) => 
-                        return perform_dot_lookup(Values::Ref(ptr.clone(), *mt), right, scope),
-                    _ => (),
-                };
-                let rf = Values::Ref(v.clone(), nm_mut);
-                perform_dot_lookup(rf, right, scope)
-            },
-            None => return ukn_name(x),
-        }
+        lookup_on_name(x, right, scope)
     } else {
         match eval(left, scope) {
             Vl(v) => perform_dot_lookup(v, right, scope),
@@ -70,6 +59,23 @@ fn perform_dot_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> Res 
     }
 }
 
+/// Performs a lookup for `right` on the value of `name` bound in `scope`
+fn lookup_on_name(name: &String, right: &Ast, scope: &mut impl Environment) -> Res {
+    match scope.find(name) {
+        Some((v, nm_mut)) => {
+            match &*v.borrow() {
+                Values::Ref(ptr, mt) => 
+                    return perform_dot_lookup(Values::Ref(ptr.clone(), *mt), right, scope),
+                _ => (),
+            };
+            let rf = Values::Ref(v.clone(), nm_mut);
+            perform_dot_lookup(rf, right, scope)
+        },
+        None => return ukn_name(name),
+    }
+}
+
+/// Looks up `right` on the value `val`
 fn perform_dot_lookup(val: Values, right: &Ast, scope: &mut impl Environment) -> Res {
     match right {
         Ast::FnApply(name, args) => {
@@ -116,7 +122,6 @@ fn lookup(val: &Values, name: &String, scope: &mut impl Environment)
             Some(val.clone())
         } else { None }
     } 
-    
     else if let Some((ptr, _)) = scope.find(&class_func_name[..]) {    
         Some(ptr)
     } else if let Some((ptr, _)) = scope.find(&name[..]) {

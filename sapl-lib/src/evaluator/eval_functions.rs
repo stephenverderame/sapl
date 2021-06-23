@@ -17,33 +17,40 @@ pub fn eval_func(name: &String, params: &Vec<String>, ast: &Ast, postcondition: 
     scope: &mut impl Environment)
     -> Res
 {
-    let nw_scope = Rc::new(RefCell::new(std_sapl::get_std_environment()));
-    let post = if postcondition.is_some() {
-        let ptr = postcondition.as_ref().unwrap();
-        capture_into_scope(&*ptr, &mut nw_scope.borrow_mut(), scope);
-        Some(*ptr.clone())
-    } else { None };
-    scope.add(name.to_string(), 
-        Values::Func(params.clone(), ast.clone(), nw_scope.clone(), post), false);
-    capture_into_scope(ast, &mut nw_scope.borrow_mut(), scope);
+    let v = match sapl_func_to_val(name, params, ast, postcondition, scope) {
+        Vl(v) => v,
+        e => return e,
+    };
+    scope.add(name.to_string(), v, false);
     Vl(Values::Unit)
 }
 
+/// Converts a function AST (Function or lambda to a value)
 pub fn func_to_val(func: &Ast, scope: &mut impl Environment) -> Res {
     match func {
         Ast::Lambda(params, ast) => eval_lambda(params, ast, scope),
-        Ast::Func(_, params, ast, pce) => {
-            let nw_scope = Rc::new(RefCell::new(std_sapl::get_std_environment()));
-            let post = if pce.is_some() {
-                let ptr = pce.as_ref().unwrap();
-                capture_into_scope(&*ptr, &mut nw_scope.borrow_mut(), scope);
-                Some(*ptr.clone())
-            } else { None };
-            capture_into_scope(&*ast, &mut nw_scope.borrow_mut(), scope);
-            Vl(Values::Func(params.clone(), *ast.clone(), nw_scope.clone(), post))          
-        },
+        Ast::Func(name, params, ast, pce) => sapl_func_to_val(name, params, &*ast, pce, scope),
         x => Bad(format!("Eval function error: {:?} is not a function", x)),
     }
+}
+
+
+/// Converts a sapl function AST to a sapl function value
+/// Captures names in `ast` that are also in `scope` via copy
+/// Adds the new function to the new function scope
+fn sapl_func_to_val(name: &String, params: &Vec<String>, ast: &Ast, pce: &Option<Box<Ast>>, 
+    scope: &mut impl Environment) -> Res 
+{
+    let nw_scope = Rc::new(RefCell::new(std_sapl::get_std_environment()));
+    let post = if pce.is_some() {
+        let ptr = pce.as_ref().unwrap();
+        capture_into_scope(&*ptr, &mut nw_scope.borrow_mut(), scope);
+        Some(*ptr.clone())
+    } else { None };
+    capture_into_scope(ast, &mut nw_scope.borrow_mut(), scope);
+    let func = Values::Func(params.clone(), ast.clone(), nw_scope.clone(), post);
+    nw_scope.borrow_mut().add(name.to_string(), func.clone(), false);
+    Vl(func)
 }
 
 /// Evaluates a lambda expression

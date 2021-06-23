@@ -1119,19 +1119,19 @@ mod tests {
             def ssn
             pub def name, var age = 0
 
-            fun Person nme {
-                name <- nme;
-                ssn <- 156
+            fun Person name {
+                _name = name;
+                ssn = 156
             }
 
             pub fun greet {
-                "Hello! My name is " + *name
-                + " and I am " + *age
+                "Hello! My name is " + name
+                + " and I am " + age
                 + " years old."
             }
 
             pub fun verify test_ssn {
-                *ssn == test_ssn
+                ssn == test_ssn
             }
         }
 
