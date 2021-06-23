@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use crate::parser::Ast;
 use std::collections::HashMap;
 use super::environment::{Scope, Environment};
+use super::eval_class::Class;
 
 #[derive(Clone)]
 pub enum Values {
@@ -20,6 +21,7 @@ pub enum Values {
     Placeholder,
     Ref(Rc<RefCell<Values>>, bool),
     RustFunc(Rc<dyn Fn(Vec<Values>) -> Res>, usize),
+    Object(Class),
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -49,6 +51,7 @@ impl PartialEq for Values {
             (Range(a, b), Range(c, d)) => a == c && b == d,
             (Unit, Unit) => true,
             (Placeholder, Placeholder) => true,
+            (Object(a), Object(b)) => a == b,
             _ => false,
         }
     }
@@ -60,15 +63,16 @@ impl std::fmt::Debug for Values {
         match self {
             RustFunc(..) | Func(..) => write!(f, "<function>"),
             Int(x) => write!(f, "{}", x),
-            Str(x) => write!(f, "{}", x),
+            Str(x) => write!(f, "'{}'", x),
             Bool(x) => write!(f, "{}", x),
             Float(x) => write!(f, "{}", x),
             Array(x) | Tuple(x) => write!(f, "{:?}", x),
             Map(x) => write!(f, "{:?}", x),
-            Ref(x, _) => write!(f, "{:?}", x),
+            Ref(x, _) => write!(f, "ref {:?}", x),
             Placeholder => write!(f, "<placeholder>"),
             Unit => write!(f, "<unit>"),
-            Range(a, b) => write!(f, "{:?}..{:?}", a, b),          
+            Range(a, b) => write!(f, "{:?}..{:?}", a, b), 
+            Object(a) => write!(f, "Object {{ {:?} }}", a),       
         }
     }
 }
@@ -87,7 +91,8 @@ pub fn to_booly(b: &Res) -> Result<bool, String> {
         Vl(Values::Array(x)) if !x.is_empty() => Ok(true),
         Vl(Values::Map(x)) if !x.is_empty() => Ok(true),
         Vl(Values::Range(a, b)) if a != b => Ok(true),
-        Vl(Values::Func(..)) | Vl(Values::Tuple(..)) => Ok(true),        
+        Vl(Values::Func(..)) | Vl(Values::Tuple(..))
+        | Vl(Values::Object(_)) => Ok(true),        
         Vl(_) => Ok(false),
         Bad(e) => Err(e.to_string()),
        _ => Err("Return/exn value cannot be converted to bool".to_owned()),

@@ -12,6 +12,8 @@ use super::vals::eval_args;
 use super::eval_functions::apply_function;
 use std::cell::RefCell;
 use std::rc::Rc;
+use super::eval_class::Member;
+use super::eval_class::Class;
 
 /// Evaluates `left op right`
 /// If `op` is a short circuit operator, only evaluates `left` if the short circuit path is taken
@@ -106,7 +108,16 @@ fn lookup(val: &Values, name: &String, scope: &mut impl Environment)
         class_name
     };
     let class_func_name = format!("{}::{}", class_name_no_details, name);
-    if let Some((ptr, _)) = scope.find(&class_func_name[..]) {    
+    if let Values::Ref(ptr, _) = &val {
+        lookup(&*ptr.borrow(), name, scope)
+    }
+    else if let Values::Object(Class {name: _, members, ..}) = &val {
+        if let Some(Member {val, is_var: _, is_pub: true}) = members.get(name) {
+            Some(val.clone())
+        } else { None }
+    } 
+    
+    else if let Some((ptr, _)) = scope.find(&class_func_name[..]) {    
         Some(ptr)
     } else if let Some((ptr, _)) = scope.find(&name[..]) {
         Some(ptr)

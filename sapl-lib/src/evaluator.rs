@@ -19,6 +19,8 @@ mod eval_bop;
 use eval_bop::*;
 mod eval_functions;
 use eval_functions::*;
+mod eval_class;
+use eval_class::*;
 
 /// Evaluates a SAPL AST
 pub fn evaluate(ast: &Ast) -> Res {
@@ -53,7 +55,7 @@ fn eval(ast: &Ast, scope: &mut impl Environment) -> Res {
         Ast::For(vars, iter, if_expr, body) => eval_for(vars, &*iter, if_expr, &*body, scope),
         Ast::While(guard, body) => eval_while(&*guard, &*body, scope),
         Ast::Placeholder => Vl(Values::Placeholder),
-        Ast::Struct(_) => Bad("Unimplemented".to_owned()),
+        Ast::Struct(class) => eval_class_def(class, scope),
     }
 }
 

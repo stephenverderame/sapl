@@ -1086,7 +1086,7 @@ mod tests {
                     Box::new(Ast::VInt(0)), None)
             )),
             dtor: Some(Box::new(
-                Ast::Func("Person_dtor".to_owned(), Vec::<String>::new(),
+                Ast::Func("`Person".to_owned(), Vec::<String>::new(),
                     Box::new(Ast::VInt(0)), None)
             )),
             publics: vec![("name".to_owned(), false, None),
@@ -1097,14 +1097,14 @@ mod tests {
         };
         assert_parse_str_eq(r#"
         struct Person {
-            def ssn
+            def ssn;
             pub def name, var age = 0
 
             fun Person name {
                 0
             }
 
-            fun Person_dtor {
+            fun `Person {
                 0
             }
 
@@ -1113,6 +1113,32 @@ mod tests {
             }
         }
         "#, Ast::Struct(st));
+
+        assert_sapl_eq(r#"
+        struct Person {
+            def ssn
+            pub def name, var age = 0
+
+            fun Person nme {
+                name <- nme;
+                ssn <- 156
+            }
+
+            pub fun greet {
+                "Hello! My name is " + *name
+                + " and I am " + *age
+                + " years old."
+            }
+
+            pub fun verify test_ssn {
+                *ssn == test_ssn
+            }
+        }
+
+        let jane = Person('Jane');
+        [jane.greet(), jane.verify(156), 10 |> jane.verify, jane.name]
+        "#, 
+        "['Hello! My name is Jane and I am 0 years old.', true, false, 'Jane']");
     }
 
     #[test]

@@ -17,6 +17,8 @@ pub trait Environment: std::fmt::Debug {
     /// If `name` is `"_"`, the value is not added
     fn add(&mut self, name: String, val: Values, mutable: bool);
 
+    fn add_direct(&mut self, name: String, val: Rc<RefCell<Values>>, mutable: bool);
+
     /// Updates an existing value in the environment
     /// Returns `false` if `name` is immutable or if the value
     /// isn't found
@@ -74,6 +76,13 @@ impl Environment for Scope {
         if name != "_" {
             self.names.front_mut().unwrap()
                 .insert(name, (Rc::new(RefCell::new(val)), mutable));
+        }
+    }
+
+    fn add_direct(&mut self, name: String, val: Rc<RefCell<Values>>, mutable: bool) {
+        if name != "_" {
+            self.names.front_mut().unwrap()
+                .insert(name, (val, mutable));
         }
     }
 
@@ -157,6 +166,9 @@ impl<'a> Environment for ScopeProxy<'a> {
     fn cpy(&self) -> Scope {
         self.scope.cpy()
     }
+    fn add_direct(&mut self, name: String, val: Rc<RefCell<Values>>, mutable: bool) {
+        self.scope.add_direct(name, val, mutable);
+    }
 }
 
 /// An environment with an immutable parent scope reference and
@@ -202,5 +214,8 @@ impl<'a> Environment for ImmuScope<'a> {
         let mut sc = self.parent.cpy();
         sc.add_sub_scope(self.children.cpy());
         sc
+    }
+    fn add_direct(&mut self, name: String, val: Rc<RefCell<Values>>, mutable: bool) {
+        self.children.add_direct(name, val, mutable);
     }
 }

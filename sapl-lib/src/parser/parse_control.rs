@@ -138,7 +138,7 @@ fn can_elide_seq(ast: &Ast) -> bool {
     match ast {
         Ast::If(..) | Ast::Func(..) |
         Ast::Try(..) | Ast::For(..) |
-        Ast::While(..) => true,
+        Ast::While(..) | Ast::Struct(..) => true,
         _ => false,
     }
 }

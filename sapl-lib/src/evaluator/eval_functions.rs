@@ -8,6 +8,7 @@ use crate::evaluator::*;
 use super::vals::eval_args;
 use std::cell::RefCell;
 use std::rc::Rc;
+use crate::parser::SaplStruct;
 
 /// Evaluates a function definition and adds the function to `scope`
 /// Captures names references in `ast` that are also in `scope` by copying them into a new
@@ -26,6 +27,23 @@ pub fn eval_func(name: &String, params: &Vec<String>, ast: &Ast, postcondition: 
         Values::Func(params.clone(), ast.clone(), nw_scope.clone(), post), false);
     capture_into_scope(ast, &mut nw_scope.borrow_mut(), scope);
     Vl(Values::Unit)
+}
+
+pub fn func_to_val(func: &Ast, scope: &mut impl Environment) -> Res {
+    match func {
+        Ast::Lambda(params, ast) => eval_lambda(params, ast, scope),
+        Ast::Func(_, params, ast, pce) => {
+            let nw_scope = Rc::new(RefCell::new(std_sapl::get_std_environment()));
+            let post = if pce.is_some() {
+                let ptr = pce.as_ref().unwrap();
+                capture_into_scope(&*ptr, &mut nw_scope.borrow_mut(), scope);
+                Some(*ptr.clone())
+            } else { None };
+            capture_into_scope(&*ast, &mut nw_scope.borrow_mut(), scope);
+            Vl(Values::Func(params.clone(), *ast.clone(), nw_scope.clone(), post))          
+        },
+        x => Bad(format!("Eval function error: {:?} is not a function", x)),
+    }
 }
 
 /// Evaluates a lambda expression
@@ -88,10 +106,23 @@ fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment
                 capture_into_scope(key, scope, old_scope);
             }
         },
-        Ast::Struct(..) => (), //TODO
+        Ast::Struct(SaplStruct {name: _, publics, privates, ctor, dtor}) => {
+            for mem in publics.iter().chain(privates.iter()) {
+                let (_, _, ast) = mem;
+                capture_scope_from_box(ast, scope, old_scope);
+            }
+            capture_scope_from_box(ctor, scope, old_scope);
+            capture_scope_from_box(dtor, scope, old_scope);
+        }, 
         Ast::Placeholder | Ast::VInt(_) | Ast::VStr(_)
         | Ast::VBool(_) | Ast::VFloat(_) => (),
 
+    }
+}
+
+fn capture_scope_from_box(ast: &Option<Box<Ast>>, scope: &mut Scope, old_scope: &impl Environment) {
+    if let Some(ast) = ast {
+        capture_into_scope(&**ast, scope, old_scope);
     }
 }
 
@@ -137,7 +168,7 @@ pub fn apply_function(func: &Values, args: Vec<Values>, allow_incomplete: bool, 
             apply_rust_function(func.clone(), *min_args, args, allow_incomplete, force_partial),
         Values::Ref(func, _) =>
             apply_function(&func.borrow(), args, allow_incomplete, force_partial),
-        _ => str_exn(NFUNC),
+        x => str_exn(&format!("{}: Apply function, {:?}", NFUNC, x)[..]),
     } 
 }
 
@@ -155,7 +186,7 @@ fn apply_sapl_function(params: &Vec<String>, ast: &Ast, fn_scope: &Rc<RefCell<Sc
     if allow_incomplete && args.len() < params.len() {
         args.append(&mut vec![Values::Placeholder; params.len() - args.len()]);
     } else if params.len() != args.len() { 
-        return Bad(format!("Arg count mismatch formals {} vs args {} and incomplete: {}",
+        return Bad(format!("Arg count mismatch passed formals {} vs args {} and incomplete: {}",
             params.len(), args.len(), allow_incomplete)); 
     }
 

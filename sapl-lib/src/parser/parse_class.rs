@@ -45,7 +45,7 @@ fn parse_struct_body(name: String, stream: &mut VecDeque<Tokens>) -> Result<Ast,
         let res = 
         match stream.front() {
             Some(&Tokens::Pub) => parse_member(consume(stream), true, &mut object),
-            Some(&Tokens::RBrace) => break,
+            Some(&Tokens::RBrace) => { consume(stream); break},
             _ => parse_member(stream, false, &mut object),
         };
         if let Some(msg) = res {
@@ -80,6 +80,7 @@ fn parse_struct_def(stream: &mut VecDeque<Tokens>, public: bool, object: &mut Sa
         if stream.front() != Some(&Tokens::Comma) { break; }
         stream.pop_front();
     }
+    if stream.front() == Some(&Tokens::Seq) { consume(stream); }
     None
 }
 
@@ -103,7 +104,7 @@ fn parse_struct_fun(stream: &mut VecDeque<Tokens>, public: bool, object: &mut Sa
             let val = Box::new(Ast::Func(name.clone(), a, b, c));
             if name == object.name {
                 object.ctor = Some(val);
-            } else if name == format!("{}_dtor", object.name) {
+            } else if name == format!("`{}", object.name) {
                 object.dtor = Some(val);
             } else {
                 add_struct_val(public, (name, false, Some(val)), object);
