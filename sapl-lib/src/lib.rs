@@ -1075,6 +1075,17 @@ mod tests {
         let func = &fun (x) x + 200;
         func(200)
         "#, "400");
+
+        assert_sapl_eq(r#"
+        let var num = 0;
+        fun do_it -> int == 10 {
+            num = num + 10;
+            num
+        }
+        num = do_it();
+        num = num + do_it();
+        num
+        "#, "20");
     }
     #[test]
     fn struct_tests() {
@@ -1120,18 +1131,18 @@ mod tests {
             pub def name, var age = 0
 
             fun Person name {
-                _name = name;
-                ssn = 156
+                _name <- name;
+                ssn <- 156
             }
 
             pub fun greet {
-                "Hello! My name is " + name
-                + " and I am " + age
+                "Hello! My name is " + *name
+                + " and I am " + *age
                 + " years old."
             }
 
             pub fun verify test_ssn {
-                ssn == test_ssn
+                *ssn == test_ssn
             }
         }
 
@@ -1139,6 +1150,37 @@ mod tests {
         [jane.greet(), jane.verify(156), 10 |> jane.verify, jane.name]
         "#, 
         "['Hello! My name is Jane and I am 0 years old.', true, false, 'Jane']");
+
+        assert_sapl_eq(r#"
+        struct Animal {
+            def var species
+
+            fun Animal species {
+                _species <- species
+            }
+
+            pub fun mutate species {
+                _species <- species
+            }
+        }
+
+        let anim = Animal('Canine');
+        let fail =
+        try
+            anim.mutate('Feline');
+            true
+        catch _: false;
+        let fail = fail || try anim.species; true catch _: false;
+        fail
+        "#, "false");
+    }
+
+    #[test]
+    fn cast_test() {
+        assert_sapl_eq("true as int", "1");
+        assert_sapl_eq("[43, 10, 'Hello'] as string", r#""[43, 10, 'Hello']""#);
+        assert_sapl_eq("'3400' as int", "3400");
+        assert_sapl_eq("{'name': 'Key', 'age': 53} as array", "[('name', 'Key'), ('age', 53)]");
     }
 
     #[test]

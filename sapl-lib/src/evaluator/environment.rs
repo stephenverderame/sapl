@@ -110,7 +110,15 @@ impl Environment for Scope {
     }
 
     fn cpy(&self) -> Scope {
-        self.clone()
+        let mut cp = Scope::new();
+        for map in &self.names {
+            let mut mp_nw = HashMap::<String, (Rc<RefCell<Values>>, bool)>::new();
+            for (k, (ptr, mtbl)) in map {
+                mp_nw.insert(k.to_owned(), (Rc::new(RefCell::new(ptr.borrow().clone())), *mtbl));
+            }
+            cp.names.push_back(mp_nw);
+        }
+        cp
     }
 
 

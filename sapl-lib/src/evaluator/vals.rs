@@ -99,6 +99,53 @@ pub fn to_booly(b: &Res) -> Result<bool, String> {
     }
 }
 
+pub fn type_conversion(val: Values, as_type: &String) -> Res {
+    use super::exn::*;
+    match (val, &as_type[..]) {
+        (Values::Func(..), _) | (Values::RustFunc(..), _) => str_exn("Cannot cast function types"),
+        (x, y) if super::std_sapl::type_of(&x) == y => Vl(x),
+        (Values::Str(x), "bool") if x == "true" => Vl(Values::Bool(true)),
+        (Values::Str(x), "bool") if x == "false" => Vl(Values::Bool(false)),
+        (x, "string") => Vl(Values::Str(format!("{:?}", x))),
+        (x, "bool") => Vl(Values::Bool(match to_booly(&Vl(x)) {
+            Ok(v) => v,
+            Err(msg) => return Res::Bad(msg),
+        })),
+        (Values::Int(a), "float") => Vl(Values::Float(a as f64)),
+        (Values::Float(a), "int") => Vl(Values::Int(a as i32)),
+        (Values::Bool(a), "int") => Vl(Values::Int(if a { 1 } else { 0 })),
+        (Values::Bool(a), "float") => Vl(Values::Float(if a { 1.0 } else { 0.0 })),
+        (Values::Tuple(x), "array") => Vl(Values::Array(x)),
+        (Values::Array(x), "tuple") => Vl(Values::Tuple(x)),
+        (Values::Str(x), "int") => match x.parse::<i32>() {
+            Ok(num) => Vl(Values::Int(num)),
+            _ => str_exn("Cannot parse str to int"),
+        },
+        (Values::Str(x), "float") => match x.parse::<f64>() {
+            Ok(num) => Vl(Values::Float(num)),
+            _ => str_exn("Cannot parse str to int"),
+        },
+        (Values::Map(map), "array") => {
+            let mut array = Vec::<Values>::new();
+            for (k, v) in map.into_iter() {
+                let tup = Values::Tuple(Box::new(
+                    vec![Values::Str(k), v]
+                ));
+                array.push(tup);
+            }
+            Vl(Values::Array(Box::new(array)))
+        },
+        (Values::Array(arr), "map") => {
+            let mut map = HashMap::<String, Values>::new();
+            for i in 0 .. arr.len() {
+                map.insert(format!("{}", i), arr[i].clone());
+            }
+            Vl(Values::Map(Box::new(map)))
+        },
+        (vl, typ) => str_exn(&format!("Unknown type conversion from {:?} to {:?}", vl, typ)[..]),
+    }
+}
+
 /// Evaluates a list of arguments `args` from Asts
 /// Passes each evaluated argument to `closure`
 /// Returns the return of `closure` if `closure` returns `Some`

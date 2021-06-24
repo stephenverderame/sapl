@@ -18,6 +18,7 @@ pub fn tok_is_bop(tok: &Tokens) -> bool {
         | Tokens::OpPipeline | Tokens::OpDot 
         | Tokens::OpRange | Tokens::OpConcat
         | Tokens::OpAssign | Tokens::Leftarrow
+        | Tokens::As
         => true,
         _ => false,
     }
@@ -157,8 +158,9 @@ fn precedence(op: Op) -> i32 {
         Op::Lor => 5,       
         Op::Range | Op::Concat => 4,
         Op::Pipeline => 3,
-        Op::Return | Op::Throw => 2,
-        Op::Assign | Op::Update => 1,
+        Op::As => 2,
+        Op::Return | Op::Throw => 1,
+        Op::Assign | Op::Update => 0,
     }
 }
 
@@ -195,6 +197,7 @@ fn tok_to_op(tok: &Tokens, uop: bool) -> Option<Op> {
         (&Tokens::Throw, _) => Some(Op::Throw),
         (&Tokens::OpAssign, _) => Some(Op::Assign),
         (&Tokens::Leftarrow, _) => Some(Op::Update),
+        (&Tokens::As, _) => Some(Op::As),
         _ => None,
     }
 }

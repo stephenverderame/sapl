@@ -24,6 +24,7 @@ pub fn eval_bop(left: &Ast, op: &Op, right: &Ast, scope: &mut impl Environment) 
         &Op::Assign => return perform_assign_op(left, right, scope),
         &Op::Update => return perform_update_op(left, right, scope),
         &Op::Index if matches!(left, Ast::Name(_)) => return perform_name_index_op(left, right, scope),
+        &Op::As if matches!(right, Ast::Name(_)) => return perform_cast(left, right, scope),
         _ => (),
     };
     let left = eval(left, scope);
@@ -428,3 +429,16 @@ fn eval_pipeline(left: Values, func: Values) -> Res
 {
     super::eval_functions::apply_function(&func, vec![left], true, false)
 }  
+
+fn perform_cast(left: &Ast, as_type: &Ast, scope: &mut impl Environment) -> Res {
+    if let Ast::Name(as_type) = as_type {
+        let vl = match eval(left, scope) {
+            Vl(v) => v,
+            e => return e,
+        };
+        super::vals::type_conversion(vl, as_type)
+    } else {
+        str_exn("Invalid type conversion. Expecting a type name as the right param")
+    }
+
+}

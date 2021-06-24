@@ -21,6 +21,7 @@ pub enum Op {
     Return, Throw,
     Assign, Update,
     Ref, Deref, MutRef,
+    As,
 }
 
 #[derive(PartialEq, Debug, Clone)]
