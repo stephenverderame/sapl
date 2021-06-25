@@ -106,7 +106,7 @@ fn perform_dot_lookup(val: Values, right: &Ast, scope: &mut impl Environment) ->
 
 /// Looks up `name` in the context of `val`
 fn lookup(val: &Values, name: &String, scope: &mut impl Environment) 
-    -> Option<Rc<RefCell<Values>>> 
+    -> Option<(Rc<RefCell<Values>>, bool)> 
 {
     let class_name = &super::std_sapl::type_of(val)[..];
     let class_name_no_details = if class_name.find(|c| { c == '_' }) != None {
@@ -118,15 +118,16 @@ fn lookup(val: &Values, name: &String, scope: &mut impl Environment)
     if let Values::Ref(ptr, _) = &val {
         lookup(&*ptr.borrow(), name, scope)
     }
-    else if let Values::Object(Class {name: _, members, ..}) = &val {
-        if let Some(Member {val, is_var: _, is_pub: true}) = members.get(name) {
-            Some(val.clone())
+    else if let Values::Object(ptr) = &val {
+        let Class {name: _, members, ..} = &*ptr.borrow();
+        if let Some(Member {val, is_var, is_pub: true}) = members.get(name) {
+            Some((val.clone(), *is_var))
         } else { None }
     } 
-    else if let Some((ptr, _)) = scope.find(&class_func_name[..]) {    
-        Some(ptr)
-    } else if let Some((ptr, _)) = scope.find(&name[..]) {
-        Some(ptr)
+    else if let Some((ptr, is_var)) = scope.find(&class_func_name[..]) {    
+        Some((ptr, is_var))
+    } else if let Some((ptr, is_var)) = scope.find(&name[..]) {
+        Some((ptr, is_var))
     } else {
         None
     }
@@ -134,10 +135,11 @@ fn lookup(val: &Values, name: &String, scope: &mut impl Environment)
 
 /// Executes `func` if the lookup was successful
 /// `fn_name` - the name of the function looked up (for debugging purposes)
-fn do_if_some<T, F>(maybe: Option<Rc<RefCell<T>>>, func: F, fn_name: &String) -> Res 
+/// Allows borrows the looked-up value immutably
+fn do_if_some<T, F>(maybe: Option<(Rc<RefCell<T>>, bool)>, func: F, fn_name: &String) -> Res 
     where F : FnOnce(&T) -> Res
 {
-    if let Some(t) = maybe {
+    if let Some((t, _)) = maybe {
         func(&t.borrow())
     } else {
         ukn_name(fn_name)
@@ -160,8 +162,33 @@ fn perform_assign_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> R
             true => Vl(Values::Unit),
             false => str_exn(IMMU_ERR),
         }
+    } else if let Ast::Bop(dot_left, Op::Dot, dot_right) = left {
+        assign_to_dot(dot_left, dot_right, rt, scope)
     } else {
         str_exn("Unimplemented assignment")
+    }
+}
+
+/// Performs an assignment where the LHS is an application of the dot operator
+/// Evaluates the left branch of the dot op and if the right branch is a name, lookups 
+/// the name in the left branch value and sets it if it is mutable
+fn assign_to_dot(dot_left: &Ast, dot_right: &Ast, set_val: Values, scope: &mut impl Environment) -> Res {
+    if let Ast::Name(name) = dot_right {
+        match eval(dot_left, scope) {
+            Vl(v) => {
+                if let Some((ptr, true)) = lookup(&v, &name, scope) {
+                    *ptr.borrow_mut() = set_val;
+                    Vl(Values::Unit)
+                } else {
+                    Res::Exn(Values::Str(
+                        format!("{} is either an invalid member of {:?} or immutable", 
+                        name, v)))
+                }
+            },
+            e => return e,
+        }
+    } else {
+        str_exn("Invalid assignment")
     }
 }
 

@@ -1173,6 +1173,42 @@ mod tests {
         let fail = fail || try anim.species; true catch _: false;
         fail
         "#, "false");
+
+        assert_sapl_eq(r#"
+        struct Machine {
+            pub def var id = 0
+        }
+
+        let var m = Machine();
+        m.id = 10;
+        m.id
+        "#, "10");
+
+        assert_sapl_eq(r#"
+        struct Machine {
+            pub def id = 0
+        }
+
+        let var m = Machine();
+        try
+            m.id = 10;
+            m.id
+        catch _:
+            'pass'
+        "#, "'pass'");
+
+        assert_sapl_eq(r#"
+        struct Machine {
+            pub def var id = 0
+        }
+
+        let m = Machine();
+        try
+            m.id = 10;
+            m.id
+        catch _:
+            'pass'
+        "#, "'pass'");
     }
 
     #[test]

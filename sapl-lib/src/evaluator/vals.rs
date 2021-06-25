@@ -21,7 +21,7 @@ pub enum Values {
     Placeholder,
     Ref(Rc<RefCell<Values>>, bool),
     RustFunc(Rc<dyn Fn(Vec<Values>) -> Res>, usize),
-    Object(Class),
+    Object(Rc<RefCell<Class>>),
 }
 
 #[derive(PartialEq, Debug, Clone)]

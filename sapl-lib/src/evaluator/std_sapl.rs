@@ -44,7 +44,10 @@ pub fn type_of(v: &Values) -> String {
         Values::Placeholder => "partial app placeholder".to_owned(),
         Values::Ref(_, _) => "ref".to_owned(),//type_of(&ptr.borrow()),
         Values::RustFunc(..) => "function".to_owned(),
-        Values::Object(Class {name, ..}) => name.clone(),
+        Values::Object(ptr) => {
+            let Class {name, ..} = &*ptr.borrow();
+            name.clone()
+        },
     }
 }
 
