@@ -100,7 +100,7 @@ fn process_fn_mem(mems: HashMap<String, Member>) -> HashMap<String, Member> {
                         let this = args.remove(0);
                         if let Values::Ref(ptr, mtble) = this {
                             if let Values::Object(ptr) = &mut *ptr.borrow_mut() {
-                                let Class {name:_, members, ..} = &*ptr.borrow();
+                                let Class {name:_, members, ..} = &**ptr;
                                 add_mems_to_scope(members, &mut *scope.borrow_mut(), mtble);
                             } else { panic!("Self is not the first param. Got {:?} and {:?}", ptr, args); }
                         } else { panic!("Self is not the first param. Got {:?} and {:?}", this, args); }
@@ -162,12 +162,12 @@ fn get_class_ctor(mems: HashMap<String, Member>, class: &SaplStruct, scope: &mut
                 e => return e,
             }
         }
-        Vl(Values::Object(Rc::new(RefCell::new(
+        Vl(Values::Object(Box::new(
         Class {
             name,
             members: process_fn_mem(mems),
             dtor,
-        }))))
+        })))
 
     };
     Vl(Values::RustFunc(Rc::new(func), min_args))

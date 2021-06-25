@@ -45,7 +45,7 @@ pub fn type_of(v: &Values) -> String {
         Values::Ref(_, _) => "ref".to_owned(),//type_of(&ptr.borrow()),
         Values::RustFunc(..) => "function".to_owned(),
         Values::Object(ptr) => {
-            let Class {name, ..} = &*ptr.borrow();
+            let Class {name, ..} = &**ptr;
             name.clone()
         },
     }

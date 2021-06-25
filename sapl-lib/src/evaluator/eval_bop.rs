@@ -119,7 +119,7 @@ fn lookup(val: &Values, name: &String, scope: &mut impl Environment)
         lookup(&*ptr.borrow(), name, scope)
     }
     else if let Values::Object(ptr) = &val {
-        let Class {name: _, members, ..} = &*ptr.borrow();
+        let Class {name: _, members, ..} = &**ptr;
         if let Some(Member {val, is_var, is_pub: true}) = members.get(name) {
             Some((val.clone(), *is_var))
         } else { None }
