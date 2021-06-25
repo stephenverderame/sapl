@@ -1147,7 +1147,7 @@ mod tests {
         }
 
         let jane = Person('Jane');
-        [jane.greet(), jane.verify(156), 10 |> jane.verify, jane.name]
+        [jane.greet(), jane.verify(156), 10 |> jane.verify, *jane.name]
         "#, 
         "['Hello! My name is Jane and I am 0 years old.', true, false, 'Jane']");
 
@@ -1176,12 +1176,38 @@ mod tests {
 
         assert_sapl_eq(r#"
         struct Machine {
+            pub def var id = &&0
+        }
+
+        let m = Machine();
+        try
+            m.id <- 10;
+            *m.id
+        catch _:
+            'pass'
+        "#, "'pass'");
+
+        assert_sapl_eq(r#"
+        struct Machine {
+            pub def id = &&0
+        }
+
+        let var m = Machine();
+        try
+            m.id <- 10;
+            *m.id
+        catch _:
+            'pass'
+        "#, "'pass'");
+
+        assert_sapl_eq(r#"
+        struct Machine {
             pub def var id = 0
         }
 
         let var m = Machine();
-        m.id = 10;
-        m.id
+        m.id <- 10;
+        *m.id
         "#, "10");
 
         assert_sapl_eq(r#"
@@ -1191,8 +1217,8 @@ mod tests {
 
         let var m = Machine();
         try
-            m.id = 10;
-            m.id
+            m.id <- 10;
+            *m.id
         catch _:
             'pass'
         "#, "'pass'");
@@ -1204,8 +1230,8 @@ mod tests {
 
         let m = Machine();
         try
-            m.id = 10;
-            m.id
+            m.id <- 10;
+            *m.id
         catch _:
             'pass'
         "#, "'pass'");
@@ -1216,7 +1242,10 @@ mod tests {
         assert_sapl_eq("true as int", "1");
         assert_sapl_eq("[43, 10, 'Hello'] as string", r#""[43, 10, 'Hello']""#);
         assert_sapl_eq("'3400' as int", "3400");
-        assert_sapl_eq("{'name': 'Key', 'age': 53} as array", "[('name', 'Key'), ('age', 53)]");
+        assert_sapl_eq(r#"
+        let act = {'name': 'Key', 'age': 53} as array;
+        let exp = [('name', 'Key'), ('age', 53)];
+        act == exp || act == exp[exp.len() - 1 .. -1]"#, "true");
     }
 
     #[test]

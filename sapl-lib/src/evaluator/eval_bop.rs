@@ -54,7 +54,7 @@ fn perform_dot_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> Res 
         lookup_on_name(x, right, scope)
     } else {
         match eval(left, scope) {
-            Vl(v) => perform_dot_lookup(v, right, scope),
+            Vl(v) => perform_dot_lookup(v, right, scope, true),
             e => return e,
         }
     }
@@ -66,22 +66,22 @@ fn lookup_on_name(name: &String, right: &Ast, scope: &mut impl Environment) -> R
         Some((v, nm_mut)) => {
             match &*v.borrow() {
                 Values::Ref(ptr, mt) => 
-                    return perform_dot_lookup(Values::Ref(ptr.clone(), *mt), right, scope),
+                    return perform_dot_lookup(Values::Ref(ptr.clone(), *mt), right, scope, nm_mut),
                 _ => (),
             };
             let rf = Values::Ref(v.clone(), nm_mut);
-            perform_dot_lookup(rf, right, scope)
+            perform_dot_lookup(rf, right, scope, nm_mut)
         },
         None => return ukn_name(name),
     }
 }
 
 /// Looks up `right` on the value `val`
-fn perform_dot_lookup(val: Values, right: &Ast, scope: &mut impl Environment) -> Res {
+fn perform_dot_lookup(val: Values, right: &Ast, scope: &mut impl Environment, val_mut: bool) -> Res {
     match right {
         Ast::FnApply(name, args) => {
             if let Ast::Name(name) = &**name {
-                do_if_some(lookup(&val, name, scope), |func| -> Res {
+                do_if_some(lookup(&val, name, scope, val_mut), |func, _| -> Res {
                     let mut params = vec![val];
                     eval_args(args, scope, |val| -> Option<Res> {
                         params.push(val);
@@ -92,11 +92,17 @@ fn perform_dot_lookup(val: Values, right: &Ast, scope: &mut impl Environment) ->
             } else { panic!("Unknown fn apply in dot op {:?}", name) }
         },
         Ast::Name(name) => {
-            do_if_some(lookup(&val, name, scope), |v| -> Res {
+            do_if_some(lookup(&val, name, scope, val_mut), |v, is_var| -> Res {
                 match v {
                     f @ Values::Func(..) | f @ Values::RustFunc(..) => 
                         apply_function(f, vec![val], true, true),
-                    v => Vl(v.clone()),
+                    Values::Ref(ptr, _) if matches!(&*ptr.borrow(), Values::Func(..)) 
+                        || matches!(&*ptr.borrow(), Values::RustFunc(..)) => {
+                            apply_function(&*ptr.borrow(), vec![val], true, true)
+                    },
+                    Values::Ref(data, mut_ref) =>
+                        Vl(Values::Ref(data.clone(), is_var && *mut_ref)),
+                    v => Vl(v.clone()), //clone creates new member vars here
                 }
             }, name)
         },
@@ -105,7 +111,7 @@ fn perform_dot_lookup(val: Values, right: &Ast, scope: &mut impl Environment) ->
 }
 
 /// Looks up `name` in the context of `val`
-fn lookup(val: &Values, name: &String, scope: &mut impl Environment) 
+fn lookup(val: &Values, name: &String, scope: &mut impl Environment, val_mut: bool) 
     -> Option<(Rc<RefCell<Values>>, bool)> 
 {
     let class_name = &super::std_sapl::type_of(val)[..];
@@ -115,19 +121,20 @@ fn lookup(val: &Values, name: &String, scope: &mut impl Environment)
         class_name
     };
     let class_func_name = format!("{}::{}", class_name_no_details, name);
-    if let Values::Ref(ptr, _) = &val {
-        lookup(&*ptr.borrow(), name, scope)
+    if let Values::Ref(ptr, is_var) = &val {
+        lookup(&*ptr.borrow(), name, scope, val_mut && *is_var)
     }
     else if let Values::Object(ptr) = &val {
         let Class {name: _, members, ..} = &**ptr;
         if let Some(Member {val, is_var, is_pub: true}) = members.get(name) {
-            Some((val.clone(), *is_var))
+            let is_mut = *is_var && val_mut;
+            Some((Rc::new(RefCell::new(Values::Ref(val.clone(), is_mut))), is_mut))
         } else { None }
     } 
     else if let Some((ptr, is_var)) = scope.find(&class_func_name[..]) {    
-        Some((ptr, is_var))
+        Some((ptr, is_var && val_mut))
     } else if let Some((ptr, is_var)) = scope.find(&name[..]) {
-        Some((ptr, is_var))
+        Some((ptr, is_var && val_mut))
     } else {
         None
     }
@@ -137,10 +144,10 @@ fn lookup(val: &Values, name: &String, scope: &mut impl Environment)
 /// `fn_name` - the name of the function looked up (for debugging purposes)
 /// Allows borrows the looked-up value immutably
 fn do_if_some<T, F>(maybe: Option<(Rc<RefCell<T>>, bool)>, func: F, fn_name: &String) -> Res 
-    where F : FnOnce(&T) -> Res
+    where F : FnOnce(&T, bool) -> Res
 {
-    if let Some((t, _)) = maybe {
-        func(&t.borrow())
+    if let Some((t, is_var)) = maybe {
+        func(&t.borrow(), is_var)
     } else {
         ukn_name(fn_name)
     }
@@ -173,10 +180,11 @@ fn perform_assign_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> R
 /// Evaluates the left branch of the dot op and if the right branch is a name, lookups 
 /// the name in the left branch value and sets it if it is mutable
 fn assign_to_dot(dot_left: &Ast, dot_right: &Ast, set_val: Values, scope: &mut impl Environment) -> Res {
+    // TODO fix
     if let Ast::Name(name) = dot_right {
         match eval(dot_left, scope) {
             Vl(v) => {
-                if let Some((ptr, true)) = lookup(&v, &name, scope) {
+                if let Some((ptr, true)) = lookup(&v, &name, scope, true) {
                     *ptr.borrow_mut() = set_val;
                     Vl(Values::Unit)
                 } else {

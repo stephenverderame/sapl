@@ -61,7 +61,8 @@ impl std::fmt::Debug for Values {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Values::*;
         match self {
-            RustFunc(..) | Func(..) => write!(f, "<function>"),
+            RustFunc(_, args) => write!(f, "<function> : {}", args),
+            Func(params, ..) => write!(f, "<function> : {}", params.len()),
             Int(x) => write!(f, "{}", x),
             Str(x) => write!(f, "'{}'", x),
             Bool(x) => write!(f, "{}", x),
