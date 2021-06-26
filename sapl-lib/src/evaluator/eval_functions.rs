@@ -113,7 +113,8 @@ fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment
                 capture_into_scope(key, scope, old_scope);
             }
         },
-        Ast::Struct(SaplStruct {name: _, publics, privates, ctor, dtor}) => {
+        Ast::Struct(SaplStruct {name: _, publics, privates, parents: _, ctor, dtor}) |
+        Ast::Type(SaplStruct {name: _, publics, privates, parents: _, ctor, dtor}) => {
             for mem in publics.iter().chain(privates.iter()) {
                 let (_, _, ast) = mem;
                 capture_scope_from_box(ast, scope, old_scope);

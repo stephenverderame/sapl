@@ -45,18 +45,53 @@ impl Drop for Class {
 }*/
 
 pub fn eval_class_def(class: &SaplStruct, scope: &mut impl Environment) -> Res {
-    let mut mems = HashMap::<String, Member>::new();
-    if let Some(r) = iter_members(&mut mems, &class.privates, false, scope) {
-        return r;
-    }
-    if let Some(r) = iter_members(&mut mems, &class.publics, true, scope) {
-        return r;
-    }
+    let mems = match get_object_members(class, scope) {
+        Ok(map) => map,
+        Err(e) => return e,
+    };
     match get_class_ctor(mems, class, scope) {
         Vl(ctor) => scope.add(class.name.to_owned(), ctor, false),
         e => return e,
     };
     Vl(Values::Unit)
+}
+
+pub fn eval_type_def(interface: &SaplStruct, scope: &mut impl Environment) -> Res {
+    let mems = match get_object_members(interface, scope) {
+        Ok(map) => map,
+        Err(e) => return e,
+    };
+    scope.add(interface.name.to_owned(), Values::Type(Rc::new(
+        Class {
+            name: interface.name.to_owned(),
+            members: mems,
+            dtor: None,
+        }
+    )), false);
+    Vl(Values::Unit)
+}
+
+fn get_object_members(object: &SaplStruct, scope: &mut impl Environment) 
+    -> Result<HashMap<String, Member>, Res>
+{
+    let mut mems = HashMap::<String, Member>::new();
+    for parent in &object.parents {
+        if let Some((ptr, _)) = scope.find(&parent[..]) {
+            if let Values::Type(ptr) = &*ptr.borrow() {
+                let Class {name:_, members, ..} = ptr.as_ref();
+                for (name, mem) in members {
+                    mems.insert(name.clone(), mem.clone());
+                }
+            } else { return Err(str_exn("Cannot subtype from non-type")); }
+        } else { return Err(ukn_name(parent)); }
+    }
+    if let Some(r) = iter_members(&mut mems, &object.privates, false, scope) {
+        return Err(r);
+    }
+    if let Some(r) = iter_members(&mut mems, &object.publics, true, scope) {
+        return Err(r);
+    }
+    Ok(mems)
 }
 
 fn iter_members(mems: &mut HashMap<String, Member>, container: &Vec<(String, bool, Option<Box<Ast>>)>, is_pub: bool, scope: &mut impl Environment) 

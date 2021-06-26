@@ -48,6 +48,10 @@ pub fn type_of(v: &Values) -> String {
             let Class {name, ..} = &**ptr;
             name.clone()
         },
+        Values::Type(ptr) => {
+            let Class {name, ..} = &**ptr;
+            name.clone()
+        },
     }
 }
 
@@ -128,6 +132,14 @@ fn size_of(val: &Values) -> i32 {
         Values::Tuple(x) => x.len() as i32,
         Values::Unit => 0,
         Values::Ref(ptr, _) => size_of(&ptr.borrow()),
+        Values::Object(ptr) => {
+            let Class {name: _, members, ..} = &**ptr;
+            members.len() as i32
+        },
+        Values::Type(ptr) => {
+            let Class {name: _, members, ..} = &**ptr;
+            members.len() as i32
+        },
         _ => 1,
     }
 }

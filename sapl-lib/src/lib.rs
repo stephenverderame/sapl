@@ -1105,6 +1105,7 @@ mod tests {
                 ("hello".to_owned(), false, Some(Box::new(Ast::Func(
                     "hello".to_owned(), Vec::<String>::new(), Box::new(Ast::VInt(0)), None))))],
             privates: vec![("ssn".to_owned(), false, None)],
+            parents: Vec::<String>::new(),
         };
         assert_parse_str_eq(r#"
         struct Person {
@@ -1235,6 +1236,65 @@ mod tests {
         catch _:
             'pass'
         "#, "'pass'");
+
+        assert_sapl_eq(r#"
+        struct Person {
+            def secret = 0
+
+            fun get_password {
+                secret
+            }
+        }
+
+        let adam = Person();
+        try:
+            *adam.secret
+        catch _:
+            true
+        &&
+        try
+            adam.get_password()
+        catch _:
+            true
+        "#, "true")   
+    }
+
+    #[test]
+    fn type_tests() {
+        assert_sapl_eq(r#"
+        type Person {
+            pub def name, age
+
+            pub fun speak {
+                "Hello. I am " + *name 
+            }
+        }
+
+        let my_type = Person;
+
+        struct Baby : Person {
+            fun Baby name {
+                age <- 0;
+                self::name <- name
+            }
+
+            pub fun speak {
+                "Goo-goo-ga-ga"
+            }
+        }
+
+        struct Child : my_type {
+            fun Child name {
+                age <- 10;
+                self::name <- name
+            }
+        }
+
+        let little_jimmy = Baby('Jimmy');
+        let bobby = Child('Bobby');
+        [little_jimmy.speak(), *little_jimmy.age, bobby.speak()]
+        "#, 
+        "['Goo-goo-ga-ga', 0, 'Hello. I am Bobby']");
     }
 
     #[test]
@@ -1250,7 +1310,18 @@ mod tests {
 
     #[test]
     fn scope_test() {
-        assert_parse_str_eq("self::name", Ast::Name("self::name".to_owned()))
+        assert_parse_str_eq("self::name", Ast::Name("self::name".to_owned()));
+
+        assert_sapl_eq(r#"
+        let has_5 = array::contains(?, 5);
+        let lst = [10, 7];
+        let lst2 = [5, 500, 300];
+        !has_5(lst) && has_5(lst2)
+        "#, "true");
+
+        assert_sapl_eq(r#"
+        [50, 10].array::contains(10)
+        "#, "true");
     }
 
     #[test]

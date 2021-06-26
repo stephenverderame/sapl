@@ -56,6 +56,7 @@ fn eval(ast: &Ast, scope: &mut impl Environment) -> Res {
         Ast::While(guard, body) => eval_while(&*guard, &*body, scope),
         Ast::Placeholder => Vl(Values::Placeholder),
         Ast::Struct(class) => eval_class_def(class, scope),
+        Ast::Type(interface) => eval_type_def(interface, scope),
     }
 }
 

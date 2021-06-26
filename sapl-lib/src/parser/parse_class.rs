@@ -2,12 +2,14 @@ use std::collections::VecDeque;
 use crate::lexer::Tokens;
 use super::Ast;
 use super::consume;
+use super::parse_control;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SaplStruct {
     pub name: String,
     pub publics: Vec<(String, bool, Option<Box<Ast>>)>,
     pub privates: Vec<(String, bool, Option<Box<Ast>>)>,
+    pub parents: Vec<String>,
     pub ctor: Option<Box<Ast>>,
     pub dtor: Option<Box<Ast>>,
 }
@@ -18,6 +20,7 @@ impl SaplStruct {
             name,
             publics: Vec::<(String, bool, Option<Box<Ast>>)>::new(),
             privates: Vec::<(String, bool, Option<Box<Ast>>)>::new(),
+            parents: Vec::<String>::new(),
             ctor: None,
             dtor: None,
         }
@@ -27,19 +30,51 @@ impl SaplStruct {
 
 /// Requires struct token already consumed
 pub fn parse_struct(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
+    parse_object(stream, false)
+}
+
+pub fn parse_type(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
+    parse_object(stream, true)
+}
+
+#[inline(always)]
+fn parse_object(stream: &mut VecDeque<Tokens>, is_type: bool) -> Result<Ast, String> {
     if let Some(Tokens::Name(name)) = stream.pop_front() {
+        let parent_types = parse_object_types(stream);
         if stream.pop_front() != Some(Tokens::LBrace) {
             return Err("Struct missing opening brace".to_owned());
         }
-        parse_struct_body(name, stream)
+        match parse_struct_body(name, stream) {
+            Ok(mut object) => {
+                parent_types.and_then(|parents: Vec<String>| {
+                    object.parents = parents; Some(())
+                });
+                if is_type {
+                    Ok(Ast::Type(object))
+                } else { Ok(Ast::Struct(object)) }
+            },
+            Err(e) => Err(e),
+        }
+        
 
     } else {
         Err("Struct missing name".to_owned())
     }
-
 }
 
-fn parse_struct_body(name: String, stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
+fn parse_object_types(stream: &mut VecDeque<Tokens>) -> Option<Vec<String>> {
+    if stream.front() == Some(&Tokens::Colon) {
+        stream.pop_front();
+        match parse_control::parse_comma_sep_names(stream) {
+            None => None,
+            Some(x) => Some(x.into_iter().map(|(name, _): (String, bool)| {
+                name
+            }).collect()),
+        }
+    } else { None }
+}
+
+fn parse_struct_body(name: String, stream: &mut VecDeque<Tokens>) -> Result<SaplStruct, String> {
     let mut object = SaplStruct::new(name);
     loop {
         let res = 
@@ -52,7 +87,7 @@ fn parse_struct_body(name: String, stream: &mut VecDeque<Tokens>) -> Result<Ast,
             return Err(msg);
         }
     }
-    Ok(Ast::Struct(object))
+    Ok(object)
 }
 
 fn parse_member(stream: &mut VecDeque<Tokens>, public: bool, object: &mut SaplStruct) -> Option<String> {

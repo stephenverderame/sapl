@@ -138,7 +138,8 @@ fn can_elide_seq(ast: &Ast) -> bool {
     match ast {
         Ast::If(..) | Ast::Func(..) |
         Ast::Try(..) | Ast::For(..) |
-        Ast::While(..) | Ast::Struct(..) => true,
+        Ast::While(..) | Ast::Struct(..) |
+        Ast::Type(..) => true,
         _ => false,
     }
 }
@@ -147,7 +148,7 @@ fn can_elide_seq(ast: &Ast) -> bool {
 /// Requires the first name is the first token in the stream
 /// If no names are found, does not mutate stream
 /// Returns an array of name, mutability pairs
-fn parse_comma_sep_names(stream: &mut VecDeque<Tokens>) -> Option<Vec<(String, bool)>> {
+pub fn parse_comma_sep_names(stream: &mut VecDeque<Tokens>) -> Option<Vec<(String, bool)>> {
     let is_var = stream.front() == Some(&Tokens::Var);
     if is_var {consume(stream);}
     if let Some(Tokens::Name(nm)) = stream.front() {       
