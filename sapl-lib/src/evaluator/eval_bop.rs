@@ -345,7 +345,7 @@ fn range_of_array(array: &Vec<Values>, start: i32, end: i32) -> Res {
         let iter = if start < end { 
             Box::new(start..end) as Box<dyn Iterator<Item = _>>
         } else { 
-            Box::new((end + 1.. start + 1).rev())
+            Box::new((end.. start).rev())
         };
         let mut nw_array = Vec::<Values>::new();
         for i in iter {

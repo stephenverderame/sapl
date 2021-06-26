@@ -77,15 +77,21 @@ impl TokenizerFSM {
         let mut d = VecDeque::<Tokens>::new();
         let buf_line = TokenizerFSM::add_eof_to_buf(line);
         for c in buf_line {
-            let (next_state, tok) = self.state_transition(c);
-            self.append_to_token_stream(&mut d, tok);                    
-            self.append_char_to_input(c, next_state);
-            self.state = next_state;
-            if self.state == TokenizerStates::ReadError { 
-                return Err(Error::from(ErrorKind::NotFound)); 
+            if !self.tokenize_char(c, &mut d) {
+                panic!("Parse error upon reading {} in {:?}", c, line)
             }
         }
         Ok(d)
+    }
+
+    fn tokenize_char(&mut self, c: u8, d: &mut VecDeque<Tokens>) -> bool {
+        let (next_state, tok) = self.state_transition(c);
+            self.append_to_token_stream(d, tok);                    
+            self.append_char_to_input(c, next_state);
+            self.state = next_state;
+            if self.state == TokenizerStates::ReadError { 
+                false
+            } else { true }
     }
 
     /// Adds a whitespace character to `line` to indicate the end of the line
@@ -158,6 +164,9 @@ impl TokenizerFSM {
              _ if TokenizerFSM::is_op_symbol(input) =>
                 (TokenizerStates::ReadOperator, self.done_parse_token()),
 
+            TokenizerStates::ReadId if input == b':' => 
+                (TokenizerStates::ReadId, None),
+
             //lex lang tokens
             TokenizerStates::ReadLang => 
                 (TokenizerFSM::state_of_input(input), self.done_parse_token()),
@@ -197,18 +206,75 @@ impl TokenizerFSM {
     fn append_to_token_stream(&mut self, stream: &mut VecDeque<Tokens>, 
         tok: Option<Tokens>)
     {
-        if let Some(x) = tok {
-            if self.state == TokenizerStates::ReadIntDot {
-                match self.input.find('.') {
-                    Some(idx) => self.input.replace_range(0..idx, ""),
-                    _ => self.input.clear(),
+        match tok {
+            Some(Tokens::Name(name)) if name.contains(':') => 
+                self.append_colon_name(name, stream),
+            Some(tok) => {
+                if self.state == TokenizerStates::ReadIntDot {
+                    match self.input.find('.') {
+                        Some(idx) => self.input.replace_range(0..idx, ""),
+                        _ => self.input.clear(),
+                    }
+                } else {
+                    self.input.clear();
                 }
-            } else {
-                self.input.clear();
-            }
-            stream.push_back(x)    
+                stream.push_back(tok)    
+            },
+            None => (),
         } 
 
+    }
+
+    /// Appends a name to the token stream that contains a colon and thus 
+    /// may be a series of tokens
+    /// `name` the prospective name
+    /// `stream` the token stream
+    fn append_colon_name(&mut self, name: String, stream: &mut VecDeque<Tokens>) {
+        let bytes = name.as_bytes();
+        let mut should_be_colon = false;
+        let mut last_colon = 0 as usize;
+        for i in 0 .. bytes.len() {
+            if bytes[i] == b':' && !should_be_colon {
+                if last_colon > 0 {
+                    return self.append_name_keep_colon(bytes, last_colon, stream);
+                } else {
+                    should_be_colon = true;
+                    last_colon = i;
+                }
+            } else if bytes[i] == b':' {
+                last_colon = 0;
+                should_be_colon = false;
+            } else if should_be_colon {
+                return self.append_name_keep_colon(bytes, last_colon, stream);
+            }
+        }
+        if should_be_colon {
+            self.append_name_keep_colon(bytes, last_colon, stream)
+        } else {
+            self.append_name(&bytes, stream)
+        }
+    }
+
+    /// Appends the name `bytes[0..last_colon]` and keeps the rest in input
+    /// and calls `append_to_token_stream` again
+    /// `bytes` the prospective name as a byte array
+    /// `last_colon` the index of the last colon in `bytes`
+    /// `stream` the token stream
+    fn append_name_keep_colon(&mut self, bytes: &[u8], last_colon: usize, 
+        stream: &mut VecDeque<Tokens>) 
+    {
+        self.append_name(&bytes[0..last_colon], stream);
+        stream.append(&mut 
+            self.tokenize_line(&bytes[last_colon..bytes.len()]).unwrap());
+    }
+
+    /// Appends `name` to `stream` as a name
+    /// Resets the input buffer and FSM state
+    fn append_name(&mut self, name: &[u8], stream: &mut VecDeque<Tokens>) {
+        self.input = String::from_utf8(name.to_vec()).unwrap();
+        stream.push_back(self.parse_cur_as_name().unwrap());
+        self.input.clear();// = String::from_utf8(vec![bytes[last_colon]]).unwrap();
+        self.state = TokenizerStates::Init;//TokenizerFSM::state_of_input(bytes[last_colon]);
     }
 
     /// Appends `c` to the input buffer it it is not a whitespace
@@ -364,7 +430,7 @@ impl TokenizerFSM {
     }
 
     fn is_name_character(c: u8) -> bool {
-        c.is_ascii_alphanumeric() || c == b'_' || c == b'`'
+        c.is_ascii_alphanumeric() || c == b'_' || c == b'`' || c == b':'
     }
 
     fn parse_cur_as_name(&self) -> Option<Tokens> {
@@ -387,6 +453,7 @@ impl TokenizerFSM {
             "pub" => Some(Tokens::Pub),
             "def" => Some(Tokens::Def),
             "as" => Some(Tokens::As),
+            "" => None,
             x => Some(Tokens::Name(x.to_owned())),
         }
     }

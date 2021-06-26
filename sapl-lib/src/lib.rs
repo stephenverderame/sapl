@@ -550,7 +550,7 @@ mod tests {
         let names = ['Diana', 'Lexi', 'Brady', 'Andrew', 'Martin'];
         let names = names + ['Angelina', 'Garcia'];
         names[2..6] == ['Brady', 'Andrew', 'Martin', 'Angelina'] &&
-        (names @ 'Brandy')[7..3] == ['Brandy', 'Garcia', 'Angelina', 'Martin']
+        (names @ 'Brandy')[8..4] == ['Brandy', 'Garcia', 'Angelina', 'Martin']
         "#, Values::Bool(true));
     }
 
@@ -846,7 +846,7 @@ mod tests {
             count = count - i
         }
         count
-        "#, Values::Int(2450));
+        "#, Values::Int(2550));
 
         assert_val_eq(r#"
         let var result = '';
@@ -1131,7 +1131,7 @@ mod tests {
             pub def name, var age = 0
 
             fun Person name {
-                _name <- name;
+                self::name <- name;
                 ssn <- 156
             }
 
@@ -1156,11 +1156,11 @@ mod tests {
             def var species
 
             fun Animal species {
-                _species <- species
+                self::species <- species
             }
 
             pub fun mutate species {
-                _species <- species
+                self::species <- species
             }
         }
 
@@ -1245,7 +1245,12 @@ mod tests {
         assert_sapl_eq(r#"
         let act = {'name': 'Key', 'age': 53} as array;
         let exp = [('name', 'Key'), ('age', 53)];
-        act == exp || act == exp[exp.len() - 1 .. -1]"#, "true");
+        act == exp || act == exp[exp.len() .. 0]"#, "true");
+    }
+
+    #[test]
+    fn scope_test() {
+        assert_parse_str_eq("self::name", Ast::Name("self::name".to_owned()))
     }
 
     #[test]

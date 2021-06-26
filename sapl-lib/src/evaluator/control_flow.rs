@@ -104,7 +104,7 @@ fn eval_for_range(start: Values, end: Values, name: &String, ife: Option<&Ast>,
         let iter = if min == start { 
             Box::new(min..max) as Box<dyn Iterator<Item = _>>
         } else { 
-            Box::new((min + 1 .. max + 1).rev())
+            Box::new((min..max).rev())
         };
 
         for i in iter {
