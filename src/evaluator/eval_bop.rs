@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use crate::parser::Op;
 use crate::evaluator::{Environment, ImmuScope};
 use super::vals::eval_args;
+use super::iter_over;
 use super::eval_functions::apply_function;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -63,7 +64,7 @@ fn perform_dot_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> Res 
 
 /// Performs a lookup for `right` on the value of `name` bound in `scope`
 fn lookup_on_name(name: &String, right: &Ast, scope: &mut impl Environment) -> Res {
-    match scope.find(name) {
+    match super::name_lookup(name, scope) {
         Some((v, nm_mut)) => {
             match &*v.borrow() {
                 Values::Ref(ptr, mt) => 
@@ -132,9 +133,9 @@ fn lookup(val: &Values, name: &String, scope: &mut impl Environment, val_mut: bo
             Some((Rc::new(RefCell::new(Values::Ref(val.clone(), is_mut))), is_mut))
         } else { None }
     } 
-    else if let Some((ptr, is_var)) = scope.find(&class_func_name[..]) {    
+    else if let Some((ptr, is_var)) = super::name_lookup(&class_func_name, scope) {    
         Some((ptr, is_var && val_mut))
-    } else if let Some((ptr, is_var)) = scope.find(&name[..]) {
+    } else if let Some((ptr, is_var)) = super::name_lookup(&name, scope) {
         Some((ptr, is_var && val_mut))
     } else {
         None
@@ -207,7 +208,7 @@ fn perform_update_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> R
     };
 
     if let Ast::Name(x) = left {
-        match scope.find(&x[..]) {
+        match super::name_lookup(&x, scope) {
             Some((ptr, _)) => {
                 if let Values::Ref(rf, mtble) = &*ptr.borrow() {
                     if *mtble {
@@ -294,7 +295,7 @@ fn map_concat_array(mut map: HashMap<String, Values>,
 /// Indexes `left[right]` where `left` is a name
 fn perform_name_index_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> Res {
     if let Ast::Name(name) = left {
-        match (scope.find(name), eval(right, &mut ImmuScope::from(scope))) {
+        match (super::name_lookup(name, scope), eval(right, &mut ImmuScope::from(scope))) {
             (Some((val, _)), Vl(rt)) => perform_index_op(&val.borrow(), rt),
             (None, _) => ukn_name(name),
             (_, e) => e,
@@ -314,6 +315,7 @@ fn perform_index_op(left: &Values, right: Values) -> Res {
             }
         },
         (Values::Ref(rf, _), idx) => perform_index_op(&rf.borrow(), idx),
+        (Values::Str(string), v) => index_string(string, v),
         (x, idx) => inv_arg("index", Some(&format!(
             "Expected an indexable expression. Got: {:?}[{:?}]", x, idx
         ))),
@@ -326,33 +328,63 @@ fn index_array(array: &Vec<Values>, indexer: Values) -> Res {
             if idx < array.len() as i32 && idx >= 0 {
                 Vl(array[idx as usize].clone())
             } else {
-                str_exn(IDX_BNDS)
+                str_exn(&format!("{}: {} is out of array bounds {}..{}", IDX_BNDS, idx, 0, array.len()))
             }
         },
-        Values::Range(min, max) => {
-            if let (Values::Int(min), Values::Int(max)) = (*min, *max) {
-                range_of_array(array, min, max)
-            } else {
-                str_exn(IDX_BNDS)
-            }
-        },
+        Values::Range(min, max) => do_if_valid_range(&min, &max, &|min, max| -> Res {
+            range_of_array(array, min, max)
+        }),
         x => inv_arg("Array index.", Some(&format!("{:?}", x)))
+    }
+}
+
+fn index_string(string: &String, indexer: Values) -> Res {
+    match indexer {
+        Values::Int(idx) => {
+            let bytes = string.as_bytes().to_vec();
+            if idx < bytes.len() as i32 && idx >= 0 {
+                Vl(Values::Str(bytes[idx as usize].to_string()))
+            } else {
+                str_exn(&format!("Index {} out of bounds of {}..{} for string", idx, 0, bytes.len()))
+            }
+        },
+        Values::Range(min, max) => do_if_valid_range(&min, &max, &|min, max| -> Res {
+            range_of_string(string, min, max)
+        }),
+        x => inv_arg("String index", Some(&format!("{:?}", x))),
+
+    }
+}
+
+fn do_if_valid_range(start: &Values, end: &Values, func: &dyn Fn(i32, i32) -> Res) -> Res {
+    if let (Values::Int(min), Values::Int(max)) = (start, end) {
+        func(*min, *max)
+    } else {
+        str_exn(&format!("{}: Index array with invalid range", IDX_BNDS))
+    }
+}
+
+fn range_of_string(string: &String, start: i32, end: i32) -> Res {
+    let array = string.as_bytes().to_vec();
+    if start >= 0 && end >= 0 && start <= array.len() as i32 && end <= array.len() as i32 {
+        let mut nw = Vec::<u8>::new();
+        iter_over(start, end, &mut |idx: i32| -> Option<Res> {
+            nw.push(array[idx as usize].clone());
+            None
+        });
+        Vl(Values::Str(String::from_utf8(nw).unwrap()))
+    } else {
+        str_exn(&format!("{} when taking the range {}..{} of array", IDX_BNDS, start, end))
     }
 }
 
 fn range_of_array(array: &Vec<Values>, start: i32, end: i32) -> Res {
     if start >= 0 && end >= 0 && start <= array.len() as i32 && end <= array.len() as i32 {
-        let start = start as usize;
-        let end = end as usize;
-        let iter = if start < end { 
-            Box::new(start..end) as Box<dyn Iterator<Item = _>>
-        } else { 
-            Box::new((end.. start).rev())
-        };
         let mut nw_array = Vec::<Values>::new();
-        for i in iter {
-            nw_array.push(array[i].clone());
-        }
+        iter_over(start, end, &mut |idx: i32| -> Option<Res> {
+            nw_array.push(array[idx as usize].clone());
+            None
+        });
         Vl(Values::Array(Box::new(nw_array)))
     } else {
         str_exn(&format!("{} when taking the range {}..{} of array", IDX_BNDS, start, end))

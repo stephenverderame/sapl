@@ -37,16 +37,16 @@ pub fn eval(ast: &Ast, scope: &mut impl Environment) -> Res {
         Ast::VInt(x) => Vl(Values::Int(*x)),
         Ast::VStr(x) => Vl(Values::Str(x.clone())),
         Ast::VBool(x) => Vl(Values::Bool(*x)),
-        Ast::Name(x) => match scope.find(x) {
+        Ast::Name(x) => match name_lookup(&x, scope) {
             Some((val, _)) => Vl(val.borrow().clone()),
             _ => ukn_name(x),
         },
         Ast::Bop(left, op, right) => eval_bop(&*left, op, &*right, scope),
         Ast::If(guard, body, other) => eval_if(&*guard, &*body, other, scope),
         Ast::Seq(children) => eval_seq(children, scope),
-        Ast::Let(name, ast) => eval_let(name, &*ast, scope),
+        Ast::Let(name, ast) => eval_let(name, &*ast, scope, false),
         Ast::Func(name, params, ast, post) => 
-            eval_func(name, params, &*ast, post, scope),
+            eval_func(name, params, &*ast, post, scope, false),
         Ast::Lambda(params, ast) => eval_lambda(params, &*ast, scope),
         Ast::FnApply(left, args) => 
             eval_fn_app(&*left, args, scope),
@@ -58,8 +58,9 @@ pub fn eval(ast: &Ast, scope: &mut impl Environment) -> Res {
         Ast::For(vars, iter, if_expr, body) => eval_for(vars, &*iter, if_expr, &*body, scope),
         Ast::While(guard, body) => eval_while(&*guard, &*body, scope),
         Ast::Placeholder => Vl(Values::Placeholder),
-        Ast::Struct(class) => eval_class_def(class, scope),
-        Ast::Type(interface) => eval_type_def(interface, scope),
+        Ast::Struct(class) => eval_class_def(class, scope, false),
+        Ast::Type(interface) => eval_type_def(interface, scope, false),
+        Ast::Export(ast) => eval_export(&*ast, scope),
     }
 }
 
@@ -67,7 +68,7 @@ fn eval_ref(left: &Ast, op: &Op, scope: &mut impl Environment) -> Res {
     let mutable = op != &Op::Ref;
     match left {
         Ast::Name(x) => {
-            if let Some((ptr, mtble)) = scope.find(&x[..]) {
+            if let Some((ptr, mtble)) = name_lookup(&x, scope) {
                 if !mutable || mutable && mtble {
                     Vl(Values::Ref(ptr.clone(), mutable))
                 } else {
@@ -90,28 +91,56 @@ fn eval_ref(left: &Ast, op: &Op, scope: &mut impl Environment) -> Res {
     }
 }
 
+/// Iterates over the valid sapl range start..end
+/// Reverses the range if `start < end`
+/// Passes the index to `func` on each iteration
+fn iter_over(start: i32, end: i32, func: &mut dyn FnMut(i32) -> Option<Res>) -> Option<Res> {
+    let start = start;
+    let end = end;
+    let iter = if start < end { 
+        Box::new(start..end) as Box<dyn Iterator<Item = _>>
+    } else { 
+        Box::new((end.. start).rev())
+    };
+    for i in iter {
+        match func(i) {
+            None => (),
+            s => return s,
+        }
+    }
+    None
+}
+
+fn scope_add(scope: &mut impl Environment, name: &str, val: Values, 
+    is_mut: bool, is_pub: bool) 
+{
+    let name = format!("{}{}", if is_pub {"export::"} else {""}, name);
+    scope.add(name, val, is_mut);
+}
+
 /// Evaluates a let definition by adding `name` to `scope`
 /// Returns unit on success
-fn eval_let(names: &Vec<(String, bool)>, ast: &Ast, scope: &mut impl Environment) 
+fn eval_let(names: &Vec<(String, bool)>, ast: &Ast, 
+    scope: &mut impl Environment, public: bool) 
     -> Res 
 {
     match eval(ast, scope) {
         Vl(val) if names.len() == 1 => {
             let (nm, is_mut) = names.get(0).unwrap();
-            scope.add(nm.to_string(), val, *is_mut);
+            scope_add(scope, nm, val, *is_mut, public);
             Vl(Values::Unit)
         },
         Vl(Values::Range(a, b)) if names.len() == 2 => {
             let (nm1, mut1) = &names[0];
             let (nm2, mut2) = &names[1];
-            scope.add(nm1.to_string(), *a, *mut1);
-            scope.add(nm2.to_string(), *b, *mut2);
+            scope_add(scope, nm1, *a, *mut1, public);
+            scope_add(scope, nm2, *b, *mut2, public);
             Vl(Values::Unit)
         },
         Vl(Values::Tuple(es)) if names.len() == es.len() => {
             for (nm, v) in names.iter().zip(es.into_iter()) {
                 let (nm, is_mut) = nm;
-                scope.add(nm.to_string(), v, *is_mut);
+                scope_add(scope, nm, v, *is_mut, public);
             }
             Vl(Values::Unit)
         },
@@ -189,5 +218,32 @@ fn eval_map(es: &Vec<(Ast, Ast)>, scope: &mut impl Environment) -> Res {
         }
     }
     Vl(Values::Map(Box::new(map)))
+}
+
+fn eval_export(def: &Ast, scope: &mut impl Environment) -> Res {
+    println!("Export");
+    match def {
+        Ast::Let(names, ast) => eval_let(&names, &*ast, scope, true),
+        Ast::Func(name, args, body, pce) => 
+            eval_func(&name, &args, &*body, &pce, scope, true),
+        Ast::Struct(class) => eval_class_def(&class, scope, true),
+        Ast::Type(class) => eval_type_def(&class, scope, true),
+        e => str_exn(&format!(
+            "Expected an export definition following pub. Got {:?}", e)),
+    }
+}
+
+fn name_lookup(name: &str, scope: &impl Environment) -> Option<(Rc<RefCell<Values>>, bool)> {
+    if let Some(p) = scope.find(name) { 
+        return Some(p); 
+    } 
+    if !name.contains("self::") {
+        if let Some(p) = scope.find(&format!("self::{}", name)) {
+            return Some(p)
+        } 
+    }
+    if let Some(p) = scope.find(&format!("export::{}", name)) {
+        return Some(p)
+    } else { None }
 }
 

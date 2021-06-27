@@ -99,26 +99,21 @@ fn eval_for_range(start: Values, end: Values, name: &String, ife: Option<&Ast>,
     body: &Ast, scope: &mut impl Environment) -> Res 
 {
     if let (Values::Int(start), Values::Int(end)) = (start, end) {
-        let min = std::cmp::min(start, end);
-        let max = std::cmp::max(start, end);
-        let iter = if min == start { 
-            Box::new(min..max) as Box<dyn Iterator<Item = _>>
-        } else { 
-            Box::new((min..max).rev())
-        };
-
-        for i in iter {
+        match super::iter_over(start, end, &mut |idx: i32| -> Option<Res> {
             let mut child = ScopeProxy::new(scope);
-            child.add(name.to_owned(), Values::Int(i), false);
+            child.add(name.to_owned(), Values::Int(idx), false);
 
             if !filter_out_for_loop_iter(ife, &mut child) {
                 match eval(body, &mut child) {
                     Vl(_) => (),
-                    e => return e,
+                    e => return Some(e),
                 }
             }
+            None
+        }) {
+            Some(e) => e,
+            None => Vl(Values::Unit),
         }
-        Vl(Values::Unit)
     } else {
         str_exn(&format!("{} in for loop. Range is non integral", NON_ITER))
     }

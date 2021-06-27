@@ -48,6 +48,7 @@ pub enum Ast {
     While(Box<Ast>, Box<Ast>),
     Struct(SaplStruct),
     Type(SaplStruct),
+    Export(Box<Ast>),
 }
 
 /// Parses a stream of tokens `stream` into an Abstract Syntax Tree
@@ -86,7 +87,8 @@ fn tok_is_defn(tok: &Tokens) -> bool {
     match *tok {
         Tokens::Let | Tokens::Fun | 
         Tokens::For | Tokens::While |
-        Tokens::Struct | Tokens::Type => true,
+        Tokens::Struct | Tokens::Type |
+        Tokens::Pub => true,
         _ => false,
     }
 }
@@ -216,7 +218,11 @@ fn parse_defn(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
         Some(Tokens::While) => parse_while_loop(consume(stream)),
         Some(Tokens::Struct) => parse_struct(consume(stream)),
         Some(Tokens::Type) => parse_type(consume(stream)),
-        _ => Err("Not a defn".to_owned()),
+        Some(Tokens::Pub) => match parse_defn(consume(stream)) {
+            Ok(def) => Ok(Ast::Export(Box::new(def))),
+            e => e,
+        },
+        x => Err(format!("Expected a definition. Got {:?}", x)),
     }
 }
 

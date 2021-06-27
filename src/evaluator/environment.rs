@@ -35,7 +35,7 @@ pub trait Environment: std::fmt::Debug {
     /// Should be called through the RAII `ScopeProxy`
     fn pop_scope(&mut self);
 
-    /// Gets call names `scope::xxx`
+    /// Gets all names `scope::xxx`
     fn find_all_in_scope(&self, scope: &str) -> Vec<(String, Rc<RefCell<Values>>, bool)>;
 }
 
@@ -68,8 +68,6 @@ impl Environment for Scope {
     fn find(&self, name: &str) -> Option<(Rc<RefCell<Values>>, bool)> {
         for map in &self.names {
             if let Some((val, mtble)) = map.get(name) {
-                return Some((val.clone(), *mtble));
-            } else if let Some((val, mtble)) = map.get(&format!("self::{}", name)) {
                 return Some((val.clone(), *mtble));
             }
         }

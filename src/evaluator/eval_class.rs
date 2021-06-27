@@ -44,30 +44,30 @@ impl Drop for Class {
     }
 }*/
 
-pub fn eval_class_def(class: &SaplStruct, scope: &mut impl Environment) -> Res {
+pub fn eval_class_def(class: &SaplStruct, scope: &mut impl Environment, public: bool) -> Res {
     let mems = match get_object_members(class, scope) {
         Ok(map) => map,
         Err(e) => return e,
     };
     match get_class_ctor(mems, class, scope) {
-        Vl(ctor) => scope.add(class.name.to_owned(), ctor, false),
+        Vl(ctor) => super::scope_add(scope, &class.name, ctor, false, public),
         e => return e,
     };
     Vl(Values::Unit)
 }
 
-pub fn eval_type_def(interface: &SaplStruct, scope: &mut impl Environment) -> Res {
+pub fn eval_type_def(interface: &SaplStruct, scope: &mut impl Environment, public: bool) -> Res {
     let mems = match get_object_members(interface, scope) {
         Ok(map) => map,
         Err(e) => return e,
     };
-    scope.add(interface.name.to_owned(), Values::Type(Rc::new(
+    super::scope_add(scope, &interface.name, Values::Type(Rc::new(
         Class {
             name: interface.name.to_owned(),
             members: mems,
             dtor: None,
         }
-    )), false);
+    )), false, public);
     Vl(Values::Unit)
 }
 
@@ -76,7 +76,7 @@ fn get_object_members(object: &SaplStruct, scope: &mut impl Environment)
 {
     let mut mems = HashMap::<String, Member>::new();
     for parent in &object.parents {
-        if let Some((ptr, _)) = scope.find(&parent[..]) {
+        if let Some((ptr, _)) = super::name_lookup(&parent, scope) {
             if let Values::Type(ptr) = &*ptr.borrow() {
                 let Class {name:_, members, ..} = ptr.as_ref();
                 for (name, mem) in members {

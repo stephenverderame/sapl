@@ -34,6 +34,8 @@ pub fn get_std_environment() -> Scope {
     add_func(&mut scope, "coutln", eval_cout_ln, 1);
     add_func(&mut scope, "print", eval_cout, 1);
     add_func(&mut scope, "println", eval_cout_ln, 1);
+    add_func(&mut scope, "string::contains", string_contains, 2);
+    add_func(&mut scope, "string::split", str_split, 2);
     scope
 }
 
@@ -416,9 +418,62 @@ fn eval_cout_ln(args: Vec<Values>) -> Res {
 
 fn print_args(args: Vec<Values>, out: &mut impl Write, newline: bool) {
     for arg in args {
-        out.write_all(format!("{:?}", arg).as_bytes()).unwrap();
+        out.write_all(format!("{}", arg).as_bytes()).unwrap();
     }
     if newline {
         out.write_all("\n".as_bytes()).unwrap()
     }
+}
+
+fn string_contains(mut args: Vec<Values>) -> Res {
+    let fst = args.swap_remove(0);
+    match fst {
+        Values::Str(s) => eval_str_contains(&s, args),
+        Values::Ref(ptr, _) => {
+            if let Values::Str(s) = &*ptr.borrow() {
+                eval_str_contains(s, args)
+            } else {
+                inv_arg("string::contains", 
+                    Some(&format!("First argument must be a string. Got {:?}", ptr)))
+            }
+        },
+        fst => inv_arg("string::contains", 
+            Some(&format!("First argument must be a string. Got {:?}", fst)))
+    }
+}
+
+fn eval_str_contains(string: &String, args: Vec<Values>) -> Res {
+    for a in args {
+        let needle = format!("{}", a);
+        if string.find(&needle).is_none() {
+            return Vl(Values::Bool(false))
+        }
+    }
+    Vl(Values::Bool(true))
+}
+
+fn str_split(mut args: Vec<Values>) -> Res {
+    let fst = args.swap_remove(0);
+    match (fst, args.pop().unwrap()) {
+        (Values::Str(s), Values::Str(s2)) => eval_str_split(&s, &s2),
+        (Values::Ref(ptr, _), Values::Str(s2)) => {
+            if let Values::Str(s) = &*ptr.borrow() {
+                eval_str_split(s, &s2)
+            } else {
+                inv_arg("string::split", 
+                    Some(&format!("First argument must be a string. Got {:?}", ptr)))
+            }
+        },
+        fst => inv_arg("string::split", 
+            Some(&format!("First argument must be a string. Got {:?}", fst)))
+    }
+}
+
+fn eval_str_split(string: &String, delim: &String) -> Res {
+    let array = string.split(delim);
+    let mut res_array = Vec::<Values>::new();
+    for elem in array {
+        res_array.push(Values::Str(elem.to_string()));
+    }
+    Vl(Values::Array(Box::new(res_array)))
 }

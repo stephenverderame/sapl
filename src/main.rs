@@ -13,7 +13,10 @@ fn main() {
                 let mut code = String::new();
                 file.read_to_string(&mut code).unwrap();
                 let res = parse_sapl(code.as_bytes());
-                println!("{:?}", res);
+                match res {
+                    Res::Vl(v) | Res::Ret(v) => println!("{}", v),
+                    e => println!("{:?}", e),
+                }
             },
             _ => {
                 println!("Cannot open file");
@@ -39,7 +42,7 @@ fn sapl_repl() {
         ln = ln.trim_end().to_owned();
         if last_read == 0 && ln.len() == 0 {
             match parse_and_eval(buffer.as_bytes(), &mut Some(&mut env)) {
-                Vl(res) | Exn(res) | Ret(res) => println!("{:?}", res),
+                Vl(res) | Exn(res) | Ret(res) => println!("{}", res),
                 Bad(msg) => println!("{}", msg),
             }
             buffer.clear();

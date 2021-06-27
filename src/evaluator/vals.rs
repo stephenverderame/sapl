@@ -76,7 +76,28 @@ impl std::fmt::Debug for Values {
             Unit => write!(f, "<unit>"),
             Range(a, b) => write!(f, "{:?}..{:?}", a, b), 
             Object(a) => write!(f, "Object {{ {:?} }}", a),
-            Type(a) => write!(f, "Type {{ {:?} }}", a),    
+            Type(a) => write!(f, "Type {{ {:?} }}", a),
+        }
+    }
+}
+
+impl std::fmt::Display for Values {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use Values::*;
+        match self {
+            RustFunc(_, args) => write!(f, "<function> : {}", args),
+            Func(params, ..) => write!(f, "<function> : {}", params.len()),
+            Int(x) => write!(f, "{}", x),
+            Str(x) => write!(f, "{}", x),
+            Bool(x) => write!(f, "{}", x),
+            Float(x) => write!(f, "{}", x),
+            Array(x) | Tuple(x) => write!(f, "{:?}", &*x),
+            Map(x) => write!(f, "{:?}", &*x),
+            Ref(x, _) => write!(f, "ref {}", &*x.borrow()),
+            Placeholder | Unit => Ok(()),
+            Range(a, b) => write!(f, "{}..{}", &*a, &*b), 
+            Object(a) => write!(f, "Object {{ {:?} }}", a),
+            Type(a) => write!(f, "Type {{ {:?} }}", a),
         }
     }
 }

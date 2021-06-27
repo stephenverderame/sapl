@@ -14,14 +14,14 @@ use crate::parser::SaplStruct;
 /// Captures names references in `ast` that are also in `scope` by copying them into a new
 /// environment
 pub fn eval_func(name: &String, params: &Vec<String>, ast: &Ast, postcondition: &Option<Box<Ast>>,
-    scope: &mut impl Environment)
+    scope: &mut impl Environment, public: bool)
     -> Res
 {
     let v = match sapl_func_to_val(name, params, ast, postcondition, scope) {
         Vl(v) => v,
         e => return e,
     };
-    scope.add(name.to_string(), v, false);
+    super::scope_add(scope, name, v, false, public);
     Vl(Values::Unit)
 }
 
@@ -72,13 +72,20 @@ pub fn eval_lambda(params: &Vec<String>, ast: &Ast, scope: &mut impl Environment
 /// `dynamic_capture` - true if capturing at runtime and thus is only looking for names in a dynamic namespace
 /// (such as self::)
 fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment, dynamic_capture: bool) {
+    if dynamic_capture { println!("Dynamic"); }
     match ast {
         Ast::Name(x) => {
-            if let Some((val, mtble)) = old_scope.find(x) {
-                if !dynamic_capture { scope.add(x.to_string(), val.borrow().clone(), mtble) }
-            } 
-            if let Some((val, mtble)) = old_scope.find(&format!("self::{}", x)) {
-                scope.add(format!("self::{}", x), val.borrow().clone(), mtble)
+            println!("Lookup {} during {}", x, dynamic_capture);
+            if !dynamic_capture {
+                if let Some((val, mtble)) = super::name_lookup(x, old_scope) {
+                    scope.add(x.to_string(), val.borrow().clone(), mtble)
+                } 
+            } else {
+                println!("Dynamic lookup for self::{} in {:?}", x, old_scope);
+                if let Some((val, mtble)) = old_scope.find(&format!("self::{}", x)) {
+                    println!("Dynamic lookup for self::{} in {:?}", x, old_scope);
+                    scope.add(format!("self::{}", x), val.borrow().clone(), mtble)
+                }
             }
         },
         Ast::If(guard, body, other) | Ast::For(_, guard, other, body) => {
@@ -93,7 +100,8 @@ fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment
                 capture_into_scope(&*node, scope, old_scope, dynamic_capture);
             }
         },
-        Ast::Let(_, ast) | Ast::Uop(ast, _) | Ast::Lambda(_, ast) => 
+        Ast::Let(_, ast) | Ast::Uop(ast, _) | Ast::Lambda(_, ast) 
+        | Ast::Export(ast) => 
             capture_into_scope(&*ast, scope, old_scope, dynamic_capture),
         Ast::Func(.., ast, condition) => {
             capture_into_scope(&*ast, scope, old_scope, dynamic_capture);
@@ -149,7 +157,7 @@ pub fn eval_fn_app(func: &Ast, args: &Vec<Box<Ast>>, scope: &mut impl Environmen
 {
     let func = match func {
         Ast::Name(nm) => {
-            match scope.find(nm) {
+            match super::name_lookup(nm, scope) {
                 Some((ptr, _)) => ptr.clone(),
                 _ => return ukn_name(nm),
             }
@@ -173,6 +181,7 @@ pub fn eval_fn_app(func: &Ast, args: &Vec<Box<Ast>>, scope: &mut impl Environmen
 /// and adds them to `func`
 fn add_members_to_fn_scope(func: &mut Values, scope: &impl Environment) {
     if let Values::Func(_, ast, fn_scope, _) = &func {
+        println!("Dynamic capture");
         capture_into_scope(ast, &mut fn_scope.borrow_mut(), scope, true)
     } else if let Values::Ref(ptr, _) = &func {
         add_members_to_fn_scope(&mut ptr.borrow_mut(), scope)
