@@ -377,9 +377,9 @@ fn eval_template(file: Values, map: Values, delim: &str) -> Res {
     match (file, map) {
         (Values::Str(file_name), Values::Map(map)) => {
             if let Ok(file) = fs::File::open(&file_name) {
-                let scope = append_map_to_std_env(*map);
+                let mut scope = append_map_to_std_env(*map);
                 let res = Rc::new(RefCell::new(Vec::<u8>::new()));
-                crate::parse_sapl_inplace(file, res.clone(), delim, Some(scope));               
+                crate::parse_sapl_inplace(file, res.clone(), delim, &mut Some(&mut scope));               
                 let x = Vl(Values::Str(String::from_utf8(res.borrow().clone()).unwrap())); x
             } else {
                 str_exn(&format!("{} cannot be opened", file_name))

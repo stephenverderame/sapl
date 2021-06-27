@@ -30,6 +30,7 @@ fn sapl_repl() {
     let cin = io::stdin();
     let mut last_read: usize = 0;
     io::stdout().write_all("SAPL REPL v1.0. Type '#QUIT' to quit\n".as_bytes()).unwrap();
+    let mut env = get_std_environment();
     loop {
         let mut ln = String::new();
         cin.read_line(&mut ln).unwrap();
@@ -37,7 +38,7 @@ fn sapl_repl() {
         buffer.push_str(&ln);
         ln = ln.trim_end().to_owned();
         if last_read == 0 && ln.len() == 0 {
-            match parse_sapl(buffer.as_bytes()) {
+            match parse_and_eval(buffer.as_bytes(), &mut Some(&mut env)) {
                 Vl(res) | Exn(res) | Ret(res) => println!("{:?}", res),
                 Bad(msg) => println!("{}", msg),
             }

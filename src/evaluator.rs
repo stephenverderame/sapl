@@ -136,8 +136,19 @@ fn eval_uop(left: &Ast, op: &Op, scope: &mut impl Environment) -> Res {
         },
         (Vl(v), Op::Return) => Res::Ret(v),
         (Vl(v), Op::Throw) => Res::Exn(v),
+        (Vl(Values::Str(path)), Op::Include) => eval_include(path, scope),
         (Vl(v), x) => bad_op(&v, None, *x),
         (e, _) => e,
+    }
+}
+
+fn eval_include(path: String, scope: &mut impl Environment) -> Res {
+    use std::fs;
+    match fs::File::open(&path) {
+        Ok(p) => {
+            crate::parse_and_eval(p, &mut Some(scope))
+        },
+        Err(_) => str_exn(&format!("Cannot open include file {}", path)),
     }
 }
 

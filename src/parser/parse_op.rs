@@ -77,7 +77,7 @@ pub fn tok_is_pre_uop(tok: &Tokens) -> bool {
         Tokens::OpNegate | Tokens::Return 
         | Tokens::Throw | Tokens::OpAnd |
         Tokens::OpMinus | Tokens::OpMult 
-        | Tokens::OpLand => true,
+        | Tokens::OpLand | Tokens::Include => true,
         _ => false,
     }
 }
@@ -146,7 +146,7 @@ fn parse_bop_right(stream: &mut VecDeque<Tokens>, cur_pres: i32) -> Result<Ast, 
 fn precedence(op: Op) -> i32 {
     match op {
         Op::Dot => 13,
-        Op::Ref | Op::Deref | Op::MutRef => 12,
+        Op::Ref | Op::Deref | Op::MutRef | Op::Include => 12,
         Op::Index | Op::Neg | Op::AsBool | Op::Not => 11,
         Op::Exp => 10,
         Op::Mult | Op::Mod | Op::Div | Op::And => 9,
@@ -197,6 +197,7 @@ fn tok_to_op(tok: &Tokens, uop: bool) -> Option<Op> {
         (&Tokens::Leftarrow, _) => Some(Op::Update),
         (&Tokens::As, _) => Some(Op::As),
         (&Tokens::Is, _) => Some(Op::Is),
+        (&Tokens::Include, _) => Some(Op::Include),
         _ => None,
     }
 }
