@@ -57,7 +57,6 @@ pub fn parse_conditional(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
     let guard = parse_expr(stream, None);
     match (guard, parse_block(stream, false, false)) {
         (Ok(guard), Ok(body)) => {
-            println!("If got guard {:?} and body {:?}", guard, body);
             let gd = Box::new(guard);
             let bd = Box::new(body);
             if stream.front() == Some(&Tokens::Else) {

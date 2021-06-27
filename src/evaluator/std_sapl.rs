@@ -401,7 +401,7 @@ fn eval_rdline(_:Vec<Values>) -> Res {
     use std::io;
     let mut buf = String::new();
     io::stdin().read_line(&mut buf).unwrap();
-    Vl(Values::Str(buf))
+    Vl(Values::Str(buf.trim_end().to_owned()))
 }
 
 fn eval_cout(args: Vec<Values>) -> Res {

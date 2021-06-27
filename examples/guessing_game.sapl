@@ -1,0 +1,23 @@
+println("Sapl guessing game!");
+println("Type 'quit' to exit");
+let range = 0 .. random(80, 120);
+let num = random(range);
+let var playing = true;
+let var tries = 0;
+while playing {
+    let start, end = range;
+    coutln("Guess a number from ", start, " to ", end - 1);
+    let guess = cin_line();
+    if guess == "quit": return 0
+    let guess = try guess as int catch _: 
+        coutln("Please guess a number");
+    
+    if typeof(guess) != 'unit' {
+        if guess == num:
+            coutln("You guessed ", num, " correctly in ", tries, " tries");
+            playing = false
+        else if guess < num: coutln("Too low!")
+        else coutln("Too high!")
+    }
+    tries = tries + 1
+}

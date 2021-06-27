@@ -1456,7 +1456,7 @@ mod tests {
     #[test]
     fn template_test() {
         assert_sapl_eq(r#"
-        template("template_test1.md", {'name': 'Joe', 'count': 10})
+        template("examples/template_test1.md", {'name': 'Joe', 'count': 10})
         "#, "'Hi! My name is Joe\\nJoe\\nJoe\\nJoe\\nJoe\\nJoe\\nJoe\\nJoe\\nJoe\\nJoe\\n'");
     }
 
