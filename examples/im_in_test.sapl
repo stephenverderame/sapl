@@ -1,0 +1,5 @@
+fun extern_func a b {
+    a + b
+}
+
+extern_func(?, 10)
