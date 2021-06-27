@@ -22,7 +22,7 @@ pub enum Tokens {
     Rightarrow, Var, While,
     Leftarrow,
     Def, Pub, Struct,
-    As, Type, Is, Include,
+    As, Type, Is, Include, Import,
 }
 
 /// Converts an input stream into a deque of tokens
@@ -467,6 +467,7 @@ impl TokenizerFSM {
             "type" => Some(Tokens::Type),
             "is" => Some(Tokens::Is),
             "include" => Some(Tokens::Include),
+            "import" => Some(Tokens::Import),
             "" => None,
             x => Some(Tokens::Name(x.to_owned())),
         }

@@ -136,6 +136,7 @@ fn can_elide_seq(ast: &Ast) -> bool {
         Ast::Try(..) | Ast::For(..) |
         Ast::While(..) | Ast::Struct(..) |
         Ast::Type(..) => true,
+        Ast::Export(ast) if can_elide_seq(&*ast) => true,
         _ => false,
     }
 }

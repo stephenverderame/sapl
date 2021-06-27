@@ -49,6 +49,7 @@ pub enum Ast {
     Struct(SaplStruct),
     Type(SaplStruct),
     Export(Box<Ast>),
+    Import(String, Option<String>),
 }
 
 /// Parses a stream of tokens `stream` into an Abstract Syntax Tree
@@ -88,7 +89,7 @@ fn tok_is_defn(tok: &Tokens) -> bool {
         Tokens::Let | Tokens::Fun | 
         Tokens::For | Tokens::While |
         Tokens::Struct | Tokens::Type |
-        Tokens::Pub => true,
+        Tokens::Pub | Tokens::Import => true,
         _ => false,
     }
 }
@@ -218,6 +219,7 @@ fn parse_defn(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
         Some(Tokens::While) => parse_while_loop(consume(stream)),
         Some(Tokens::Struct) => parse_struct(consume(stream)),
         Some(Tokens::Type) => parse_type(consume(stream)),
+        Some(Tokens::Import) => parse_import(consume(stream)),
         Some(Tokens::Pub) => match parse_defn(consume(stream)) {
             Ok(def) => Ok(Ast::Export(Box::new(def))),
             e => e,
@@ -300,6 +302,30 @@ fn parse_map(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
         Err("Map missing closing brace".to_owned())
     } else {
         Ok(Ast::Map(Box::new(map)))
+    }
+}
+
+fn parse_import(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
+    if let Some(Tokens::Name(mut import)) = stream.pop_front() {
+        if stream.front() == Some(&Tokens::OpMult) {
+            stream.pop_front();
+            import.push('*');
+        }
+        let mut prefix = if import.find("::*").is_some() {
+            None
+        } else { Some(import.clone()) };
+        if stream.front() == Some(&Tokens::As) {
+            if let Some(Tokens::Name(rename)) = consume(stream).pop_front() {
+                prefix = Some(rename);
+            } else {
+                return Err("Missing name after as in import definition".to_owned())
+            }            
+        }
+        let mut import = import.replace("::*", "").replace("::", "/");
+        import.push_str(".sapl");
+        Ok(Ast::Import(import, prefix))
+    } else {
+        Err("Missing module to import".to_owned())
     }
 }
 

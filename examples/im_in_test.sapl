@@ -1,5 +1,11 @@
-fun extern_func a b {
-    a + b
+let const = 7;
+
+fun helper v {
+    v - const
+}
+
+pub fun extern_func a b {
+    helper(a) + b
 }
 
 extern_func(?, 10)

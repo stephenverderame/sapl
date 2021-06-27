@@ -1355,10 +1355,49 @@ mod tests {
 
     #[test]
     fn include_test() {
-        assert_sapl_eq(r#"
+       assert_sapl_eq(r#"
         let f = include "examples/im_in_test.sapl";
-        extern_func(20, 10) + f(5)
-        "#, "45");
+        extern_func(20, 10) + f(5) + const
+        "#, "38");
+
+        assert_sapl_eq(r#"
+        pub let name = 'str';
+
+        pub fun do x {
+            x + x + x
+        }
+
+        do(name)
+        "#, "'strstrstr'");
+
+        assert_parse_str_eq("import examples::im_in_test as test", 
+            Ast::Import("examples/im_in_test.sapl".to_owned(), Some("test".to_owned())));
+
+        assert_sapl_eq(r#"
+        import examples::im_in_test as test;
+        test::extern_func(10, 20)
+        "#, "23");
+
+        assert_sapl_eq(r#"
+        import examples::im_in_test as test;
+
+        try:
+            test::const
+        catch _:
+            true
+        "#, "true");
+
+        assert_sapl_eq(r#"
+        import examples::im_in_test::*;
+
+        extern_func(10, 20)
+        "#, "23");
+
+        assert_sapl_eq(r#"
+        import examples::im_in_test;
+
+        examples::im_in_test::extern_func(10, 20)
+        "#, "23");
     }
 
     #[test]

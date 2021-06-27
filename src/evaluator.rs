@@ -61,6 +61,7 @@ pub fn eval(ast: &Ast, scope: &mut impl Environment) -> Res {
         Ast::Struct(class) => eval_class_def(class, scope, false),
         Ast::Type(interface) => eval_type_def(interface, scope, false),
         Ast::Export(ast) => eval_export(&*ast, scope),
+        Ast::Import(file, prefix) => eval_import(file, prefix, scope, false),
     }
 }
 
@@ -116,6 +117,13 @@ fn scope_add(scope: &mut impl Environment, name: &str, val: Values,
 {
     let name = format!("{}{}", if is_pub {"export::"} else {""}, name);
     scope.add(name, val, is_mut);
+}
+
+fn scope_add_dir(scope: &mut impl Environment, name: &str, val: Rc<RefCell<Values>>, 
+    is_mut: bool, is_pub: bool) 
+{
+    let name = format!("{}{}", if is_pub {"export::"} else {""}, name);
+    scope.add_direct(name, val, is_mut);
 }
 
 /// Evaluates a let definition by adding `name` to `scope`
@@ -221,13 +229,13 @@ fn eval_map(es: &Vec<(Ast, Ast)>, scope: &mut impl Environment) -> Res {
 }
 
 fn eval_export(def: &Ast, scope: &mut impl Environment) -> Res {
-    println!("Export");
     match def {
         Ast::Let(names, ast) => eval_let(&names, &*ast, scope, true),
         Ast::Func(name, args, body, pce) => 
             eval_func(&name, &args, &*body, &pce, scope, true),
         Ast::Struct(class) => eval_class_def(&class, scope, true),
         Ast::Type(class) => eval_type_def(&class, scope, true),
+        Ast::Import(file, prefix) => eval_import(file, prefix, scope, true),
         e => str_exn(&format!(
             "Expected an export definition following pub. Got {:?}", e)),
     }
@@ -237,13 +245,32 @@ fn name_lookup(name: &str, scope: &impl Environment) -> Option<(Rc<RefCell<Value
     if let Some(p) = scope.find(name) { 
         return Some(p); 
     } 
-    if !name.contains("self::") {
+    if !name.contains("::") {
         if let Some(p) = scope.find(&format!("self::{}", name)) {
             return Some(p)
+        } else if let Some(p) = scope.find(&format!("export::{}", name)) {
+            return Some(p)
         } 
-    }
-    if let Some(p) = scope.find(&format!("export::{}", name)) {
-        return Some(p)
-    } else { None }
+    }  
+    None
+
+    
 }
 
+fn eval_import(file: &str, prefix: &Option<String>, scope: &mut impl Environment, public: bool) -> Res {    
+    match std::fs::File::open(file) {
+        Ok(file) => {
+            let mut env = get_std_environment();
+            crate::parse_and_eval(file, &mut Some(&mut env));
+            let v = env.find_all_in_scope("export");
+            for (name, val, var) in v {
+                let name = if let Some(string) = prefix {
+                    format!("{}::{}", string, name.replace("export::", ""))
+                } else { name };
+                scope_add_dir(scope, &name, val.clone(), var, public);
+            }
+            Vl(Values::Unit)
+        },
+        _ => str_exn(&format!("Could not open import file {}", file)),
+    }
+}
