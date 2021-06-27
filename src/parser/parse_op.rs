@@ -18,7 +18,7 @@ pub fn tok_is_bop(tok: &Tokens) -> bool {
         | Tokens::OpPipeline | Tokens::OpDot 
         | Tokens::OpRange | Tokens::OpConcat
         | Tokens::OpAssign | Tokens::Leftarrow
-        | Tokens::As
+        | Tokens::As | Tokens::Is
         => true,
         _ => false,
     }
@@ -30,8 +30,6 @@ pub fn tok_is_val(tok: &Tokens) -> bool {
         Tokens::Integer(_) | Tokens::Bool(_)
         | Tokens::TString(_) | Tokens::Float(_) => 
             true,
-        // a name may or may not be a value, so it must be parsed via
-        // parse expr
         _ => false,
     }
 }
@@ -113,7 +111,7 @@ pub fn parse_pre_uop(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
     match stream.front() {
         Some(x) if tok_is_pre_uop(x) => parse_expr(stream, Some(prec)),
         Some(x) if tok_is_val(x) => parse_expr(stream, Some(prec)),
-        Some(_) => parse_expr(stream, Some(prec)),
+        Some(x) if super::tok_is_expr(&x) => parse_expr(stream, Some(prec)),
         x => return Err(format!("Unexpected {:?} after Uop", x)),
     };
     match right {
@@ -139,8 +137,8 @@ fn make_bop(left: Result<Ast, String>, op: Op, right: Result<Ast, String>)
 /// Parses the right productions of a BOP (either `L` or `(E)`)
 fn parse_bop_right(stream: &mut VecDeque<Tokens>, cur_pres: i32) -> Result<Ast, String> {
     match stream.front() {
-         Some(_) => parse_expr(stream, Some(cur_pres)),
-        _ => Err("Bop needs right branch".to_owned()),
+        Some(t) if super::tok_is_expr(t) => parse_expr(stream, Some(cur_pres)),
+        e => Err(format!("Expected right branch of binary op. Got {:?}", e)),
     }
 }
 /// Gets the precedence of `op`
@@ -158,7 +156,7 @@ fn precedence(op: Op) -> i32 {
         Op::Lor => 5,       
         Op::Range | Op::Concat => 4,
         Op::Pipeline => 3,
-        Op::As => 2,
+        Op::As | Op::Is => 2,
         Op::Return | Op::Throw => 1,
         Op::Assign | Op::Update => 0,
     }
@@ -198,6 +196,7 @@ fn tok_to_op(tok: &Tokens, uop: bool) -> Option<Op> {
         (&Tokens::OpAssign, _) => Some(Op::Assign),
         (&Tokens::Leftarrow, _) => Some(Op::Update),
         (&Tokens::As, _) => Some(Op::As),
+        (&Tokens::Is, _) => Some(Op::Is),
         _ => None,
     }
 }
@@ -209,9 +208,7 @@ fn parse_index_op(left: Ast, stream: &mut VecDeque<Tokens>) -> Result<Ast, Strin
         Ok(idx) => idx,
         e => return e,
     };
-    if stream.pop_front() != Some(Tokens::RBracket) {
-        Err("Missing right bracket in index operation".to_owned())
-    } else {
-        Ok(Ast::Bop(Box::new(left), Op::Index, Box::new(idx)))
-    }
+    crate::expect!(stream, Tokens::RBracket, "index operator");
+    Ok(Ast::Bop(Box::new(left), Op::Index, Box::new(idx)))
+
 }

@@ -33,13 +33,10 @@ pub fn parse_func(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
 
 /// Parses the next token on the stream as a name
 pub fn parse_name(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
-    if let Some(Tokens::Name(name)) = stream.pop_front() {
-        /*match stream.front() {
-            Some(Tokens::LParen) => parse_fn_apply(name, consume(stream)),
-            _ => Ok(Ast::Name(name)),
-        }*/
-        Ok(Ast::Name(name))
-    } else { Err("Missing name".to_owned()) }
+    match stream.pop_front() {
+        Some(Tokens::Name(name)) => Ok(Ast::Name(name)),
+        e => Err(format!("Expected name. Got {:?}", e)),
+    }
 }
 
 /// Parses a function's parameters
@@ -84,9 +81,9 @@ pub fn parse_fn_apply(func: Ast, stream: &mut VecDeque<Tokens>) -> Result<Ast, S
         }
         stream.pop_front();
     }
-    if Some(Tokens::RParen) != stream.pop_front() {
-        Err("Missing closing parenthesis in function app".to_owned())
-    } else {
-        Ok(Ast::FnApply(Box::new(func), args))
+    match stream.pop_front() {
+        Some(Tokens::RParen) => Ok(Ast::FnApply(Box::new(func), args)),
+        e => 
+            Err(format!("Missing closing parenthesis in function app. Got {:?}", e)),
     }
 }

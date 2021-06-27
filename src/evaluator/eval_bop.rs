@@ -24,7 +24,8 @@ pub fn eval_bop(left: &Ast, op: &Op, right: &Ast, scope: &mut impl Environment) 
         &Op::Assign => return perform_assign_op(left, right, scope),
         &Op::Update => return perform_update_op(left, right, scope),
         &Op::Index if matches!(left, Ast::Name(_)) => return perform_name_index_op(left, right, scope),
-        &Op::As if matches!(right, Ast::Name(_)) => return perform_cast(left, right, scope),
+        &Op::As => return perform_cast(left, right, scope),
+        &Op::Is => return perform_type_check(left, right, scope),
         _ => (),
     };
     let left = eval(left, scope);
@@ -180,7 +181,6 @@ fn perform_assign_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> R
 /// Evaluates the left branch of the dot op and if the right branch is a name, lookups 
 /// the name in the left branch value and sets it if it is mutable
 fn assign_to_dot(dot_left: &Ast, dot_right: &Ast, set_val: Values, scope: &mut impl Environment) -> Res {
-    // TODO fix
     if let Ast::Name(name) = dot_right {
         match eval(dot_left, scope) {
             Vl(v) => {
@@ -188,15 +188,13 @@ fn assign_to_dot(dot_left: &Ast, dot_right: &Ast, set_val: Values, scope: &mut i
                     *ptr.borrow_mut() = set_val;
                     Vl(Values::Unit)
                 } else {
-                    Res::Exn(Values::Str(
-                        format!("{} is either an invalid member of {:?} or immutable", 
-                        name, v)))
+                    str_exn(&format!("{} is either an invalid member of {:?} or immutable", name, v))
                 }
             },
             e => return e,
         }
     } else {
-        str_exn("Invalid assignment")
+        str_exn(&format!("Expected a name following the dot operator. Got {:?}", dot_right))
     }
 }
 
@@ -301,7 +299,7 @@ fn perform_name_index_op(left: &Ast, right: &Ast, scope: &mut impl Environment) 
             (None, _) => ukn_name(name),
             (_, e) => e,
         }
-    } else { panic!("Precondition violated") }
+    } else { panic!("Precondition broken perform_name_index_op") }
 }
 
 /// Indexes `left`[`right`]
@@ -316,7 +314,9 @@ fn perform_index_op(left: &Values, right: Values) -> Res {
             }
         },
         (Values::Ref(rf, _), idx) => perform_index_op(&rf.borrow(), idx),
-        _ => inv_arg("index", None),
+        (x, idx) => inv_arg("index", Some(&format!(
+            "Expected an indexable expression. Got: {:?}[{:?}]", x, idx
+        ))),
     }
 }
 
@@ -336,7 +336,7 @@ fn index_array(array: &Vec<Values>, indexer: Values) -> Res {
                 str_exn(IDX_BNDS)
             }
         },
-        _ => inv_arg("Array index", None)
+        x => inv_arg("Array index.", Some(&format!("{:?}", x)))
     }
 }
 
@@ -355,7 +355,7 @@ fn range_of_array(array: &Vec<Values>, start: i32, end: i32) -> Res {
         }
         Vl(Values::Array(Box::new(nw_array)))
     } else {
-        str_exn(IDX_BNDS)
+        str_exn(&format!("{} when taking the range {}..{} of array", IDX_BNDS, start, end))
     }
 }
 
@@ -475,7 +475,26 @@ fn perform_cast(left: &Ast, as_type: &Ast, scope: &mut impl Environment) -> Res 
         };
         super::vals::type_conversion(vl, as_type)
     } else {
-        str_exn("Invalid type conversion. Expecting a type name as the right param")
+        inv_arg("as", 
+            Some("Invalid type conversion. Expecting a type name as the right param"))
     }
 
+}
+
+/// Checks if the value of `left` is the type specefied as a name in `is_type`
+fn perform_type_check(left: &Ast, is_type: &Ast, scope: &mut impl Environment) -> Res {
+    if let Ast::Name(is_type) = is_type {
+        match (super::eval(left, scope), &is_type[..]) {
+            (Vl(x), typ) if super::std_sapl::type_of(&x).eq(typ) => Vl(Values::Bool(true)),
+            (Vl(Values::Tuple(_)), "tuple") =>  Vl(Values::Bool(true)),
+            (Vl(Values::Unit), "None") =>  Vl(Values::Bool(true)),
+            (Vl(x), "Some") if x != Values::Unit =>  Vl(Values::Bool(true)),
+            (Vl(_), _) =>  Vl(Values::Bool(false)),
+            (e, _) => e,
+        }
+    } else {
+        inv_arg("is", Some(&format!(
+            "Expected a type name. Got {:?}", is_type
+        )))
+    }
 }

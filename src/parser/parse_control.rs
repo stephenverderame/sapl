@@ -3,13 +3,12 @@ use crate::lexer::Tokens;
 use super::parse_expr;
 use super::Ast;
 use super::consume;
+use crate::expect;
 use super::parse_block;
 
 pub fn parse_for_loop(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
     if let Some(names) = parse_comma_sep_names(stream) {
-        if stream.pop_front() != Some(Tokens::In) { 
-            return Err("For loop missing in".to_owned())
-        }
+        expect!(stream, Tokens::In, "For loop");
 
         let iter =
         match parse_expr(stream, None) {
@@ -37,7 +36,7 @@ pub fn parse_for_loop(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
             v.push(nm);
         }
         Ok(Ast::For(v, iter, if_expr, body))
-    } else { Err("For missing names".to_owned()) }
+    } else { Err("For loop missing names".to_owned()) }
 }
 
 pub fn parse_while_loop(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
@@ -121,9 +120,7 @@ pub fn parse_seq(ast: Result<Ast, String>, stream: &mut VecDeque<Tokens>) -> Res
 /// Requires `let` has already been consumed
 pub fn parse_let(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
     if let Some(names) = parse_comma_sep_names(stream) {
-        if stream.pop_front() != Some(Tokens::OpAssign) { 
-            return Err("Missing '=' in let defn".to_owned())
-        }
+        crate::expect!(stream, Tokens::OpAssign, "let definition");
         let val = parse_expr(stream, None);
         if val.is_err() { return val; }
         Ok(Ast::Let(names, Box::new(val.unwrap())))

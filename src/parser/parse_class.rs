@@ -39,26 +39,23 @@ pub fn parse_type(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
 
 #[inline(always)]
 fn parse_object(stream: &mut VecDeque<Tokens>, is_type: bool) -> Result<Ast, String> {
-    if let Some(Tokens::Name(name)) = stream.pop_front() {
-        let parent_types = parse_object_types(stream);
-        if stream.pop_front() != Some(Tokens::LBrace) {
-            return Err("Struct missing opening brace".to_owned());
-        }
-        match parse_struct_body(name, stream) {
-            Ok(mut object) => {
-                parent_types.and_then(|parents: Vec<String>| {
-                    object.parents = parents; Some(())
-                });
-                if is_type {
-                    Ok(Ast::Type(object))
-                } else { Ok(Ast::Struct(object)) }
-            },
-            Err(e) => Err(e),
-        }
-        
-
-    } else {
-        Err("Struct missing name".to_owned())
+    match stream.pop_front() {
+        Some(Tokens::Name(name)) => {
+            let parent_types = parse_object_types(stream);
+            crate::expect!(stream, Tokens::LBrace, "Object definition");
+            match parse_struct_body(name, stream) {
+                Ok(mut object) => {
+                    parent_types.and_then(|parents: Vec<String>| {
+                        object.parents = parents; Some(())
+                    });
+                    if is_type {
+                        Ok(Ast::Type(object))
+                    } else { Ok(Ast::Struct(object)) }
+                },
+                Err(e) => Err(e),
+            }
+        },
+        e => Err(format!("Expected object name. Got {:?}", e)),
     }
 }
 
@@ -111,7 +108,7 @@ fn parse_struct_def(stream: &mut VecDeque<Tokens>, public: bool, object: &mut Sa
                 Some(Ok(ast)) => Some(Box::new(ast)),
             };
             add_struct_val(public, (name, is_var, init), object);
-        } else { return Some("Missing name from definition".to_owned()) }
+        } else { return Some("Missing name struct from definition".to_owned()) }
         if stream.front() != Some(&Tokens::Comma) { break; }
         stream.pop_front();
     }

@@ -40,7 +40,7 @@ pub fn eval_for(names: &Vec<String>, iter: &Ast, if_expr: &Option<Box<Ast>>,
             eval_for_array(*vals, names, ife, body, scope),
         Vl(Values::Map(map)) => 
             eval_for_map(*map, names, ife, body, scope),
-        _ => str_exn(NON_ITER),
+        _ => str_exn(&format!("{} in for loop", NON_ITER)),
 
     }
 }
@@ -120,7 +120,7 @@ fn eval_for_range(start: Values, end: Values, name: &String, ife: Option<&Ast>,
         }
         Vl(Values::Unit)
     } else {
-        str_exn(NON_ITER)
+        str_exn(&format!("{} in for loop. Range is non integral", NON_ITER))
     }
 }
 
@@ -148,7 +148,7 @@ fn eval_for_array(arr: Vec<Values>, names: &Vec<String>,
                 }
             },
             (1, v) => child_scope.add(names[0].to_string(), v, false),
-            _ => return str_exn(INV_DEF),
+            _ => return str_exn(&format!("{} in for loop. Expected iteration over an array of tuples or one name", INV_DEF)),
         };
 
         if !filter_out_for_loop_iter(ife, &mut child_scope) {
@@ -178,7 +178,7 @@ fn eval_for_map(map: HashMap<String, Values>, names: &Vec<String>,
                 Values::Tuple(
                     Box::new(vec![Values::Str(key), val])), 
                 false),
-            _ => return str_exn(INV_DEF),
+            _ => return str_exn(&format!("{} in for loop. Iteration over a map requires 1 or 2 names", INV_DEF)),
         };
 
         if !filter_out_for_loop_iter(ife, &mut child_scope) {

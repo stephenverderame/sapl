@@ -12,7 +12,7 @@ while playing {
     let guess = try guess as int catch _: 
         coutln("Please guess a number");
     
-    if typeof(guess) != 'unit' {
+    if guess is Some {
         if guess == num:
             coutln("You guessed ", num, " correctly in ", tries, " tries");
             playing = false

@@ -21,7 +21,7 @@ pub enum Op {
     Return, Throw,
     Assign, Update,
     Ref, Deref, MutRef,
-    As,
+    As, Is,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -58,10 +58,10 @@ pub fn parse(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
 /// Parses a single expression or definition
 fn parse_single(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
     match stream.front() {
-        Some(x) if tok_is_expr(&x) => 
-            parse_expr(stream, None),
         Some(x) if tok_is_defn(&x) =>
             parse_defn(stream),
+        Some(x) if tok_is_expr(&x) => 
+            parse_expr(stream, None),
         x => Err(format!("Expected expression, got {:?}", x)),
     }
 }
@@ -74,7 +74,8 @@ fn tok_is_expr(tok: &Tokens) -> bool {
         | Tokens::LParen | Tokens::If 
         | Tokens::Name(_) | Tokens::OpQ 
         | Tokens::LBracket | Tokens::OpNegate 
-        | Tokens::LBrace | Tokens::Try  =>
+        | Tokens::LBrace | Tokens::Try 
+        | Tokens::Fun =>
         true,
         x if tok_is_pre_uop(x) => true,
         _ => false,
@@ -176,13 +177,12 @@ fn parse_block(stream: &mut VecDeque<Tokens>,
         } else {
             parse(stream)
         };
-        if is_brace && stream.pop_front() != Some(Tokens::RBrace) { 
-            Err("Missing brace in block".to_owned())
-        } else {
-            body
+        if is_brace {
+            crate::expect!(stream, Tokens::RBrace);
         }
+        body
     } else {
-        Err("Missing colon or left brace in block".to_owned())
+        Err(format!("Parsing block got {:?} instead of a colon or brace", stream.front()))
     }
 }
 
@@ -246,6 +246,28 @@ fn parse_array(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
 fn consume(stream: &mut VecDeque<Tokens>) -> &mut VecDeque<Tokens> {
     stream.pop_front();
     stream
+}
+
+/// Pops the front of the stream an ensures that the token is the same as the expected token
+#[macro_export]
+macro_rules! expect {
+    ($a:expr, $b:expr) => {
+        {
+            match $a.pop_front() {
+                Some(t) if t == $b => (),
+                e => return Err(format!("Parse Error: Expected {:?} but got {:?}", $b, e)),
+            }
+        }
+
+    };
+    ($a:expr, $b:expr, $c:expr) => {
+        {
+            match $a.pop_front() {
+                Some(t) if t == $b => (),
+                e => return Err(format!("Parse Error: Expected {:?} but got {:?}. {:?}", $b, e, $c)),
+            }
+        }
+    };
 }
 
 /// Parses a map

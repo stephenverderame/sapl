@@ -1435,6 +1435,10 @@ mod tests {
         let act = {'name': 'Key', 'age': 53} as array;
         let exp = [('name', 'Key'), ('age', 53)];
         act == exp || act == exp[exp.len() .. 0]"#, "true");
+
+        assert_sapl_eq("5 is Some", "true");
+        assert_sapl_eq("(2, 5) is tuple_2", "true");
+        assert_sapl_eq("[100, 20] is map", "false");
     }
 
     #[test]
