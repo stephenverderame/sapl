@@ -66,7 +66,7 @@ impl std::fmt::Debug for Values {
             RustFunc(_, args) => write!(f, "<function> : {}", args),
             Func(params, ..) => write!(f, "<function> : {}", params.len()),
             Int(x) => write!(f, "{}", x),
-            Str(x) => write!(f, "'{}'", x),
+            Str(x) => write!(f, "{}", x),
             Bool(x) => write!(f, "{}", x),
             Float(x) => write!(f, "{}", x),
             Array(x) | Tuple(x) => write!(f, "{:?}", x),

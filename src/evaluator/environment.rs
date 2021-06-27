@@ -34,6 +34,9 @@ pub trait Environment: std::fmt::Debug {
     /// Internal use only: pops a sub scope off the scope stack
     /// Should be called through the RAII `ScopeProxy`
     fn pop_scope(&mut self);
+
+    /// Gets call names `scope::xxx`
+    fn find_all_in_scope(&self, scope: &str) -> Vec<(String, Rc<RefCell<Values>>, bool)>;
 }
 
 /// An environment which owns its own data
@@ -65,6 +68,8 @@ impl Environment for Scope {
     fn find(&self, name: &str) -> Option<(Rc<RefCell<Values>>, bool)> {
         for map in &self.names {
             if let Some((val, mtble)) = map.get(name) {
+                return Some((val.clone(), *mtble));
+            } else if let Some((val, mtble)) = map.get(&format!("self::{}", name)) {
                 return Some((val.clone(), *mtble));
             }
         }
@@ -119,6 +124,18 @@ impl Environment for Scope {
             cp.names.push_back(mp_nw);
         }
         cp
+    }
+
+    fn find_all_in_scope(&self, scope: &str) -> Vec<(String, Rc<RefCell<Values>>, bool)> {
+        let mut list = Vec::<(String, Rc<RefCell<Values>>, bool)>::new();
+        for map in &self.names {
+            for (k, (val, val_mut)) in map {
+                if k.contains(&format!("{}::", scope)[..]) {
+                    list.push((k.clone(), val.clone(), *val_mut));
+                }
+            }
+        }
+        return list;
     }
 
 
@@ -177,6 +194,9 @@ impl<'a> Environment for ScopeProxy<'a> {
     fn add_direct(&mut self, name: String, val: Rc<RefCell<Values>>, mutable: bool) {
         self.scope.add_direct(name, val, mutable);
     }
+    fn find_all_in_scope(&self, scope: &str) -> Vec<(String, Rc<RefCell<Values>>, bool)> {
+        self.scope.find_all_in_scope(scope)
+    }
 }
 
 /// An environment with an immutable parent scope reference and
@@ -225,5 +245,10 @@ impl<'a> Environment for ImmuScope<'a> {
     }
     fn add_direct(&mut self, name: String, val: Rc<RefCell<Values>>, mutable: bool) {
         self.children.add_direct(name, val, mutable);
+    }
+    fn find_all_in_scope(&self, scope: &str) -> Vec<(String, Rc<RefCell<Values>>, bool)> {
+        let mut x = self.children.find_all_in_scope(scope);
+        x.append(&mut self.parent.find_all_in_scope(scope));
+        x
     }
 }

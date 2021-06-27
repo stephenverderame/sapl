@@ -245,7 +245,8 @@ fn perform_concat(left: Values, right: Values) -> Res {
             Vl(Values::Array(x))
         },
         (Values::Map(mut x), Values::Tuple(mut y)) if y.len() == 2 => {
-            if let (Values::Str(key), val) = (y.swap_remove(0), y.pop().unwrap()) {
+            let first = y.swap_remove(0);
+            if let (Values::Str(key), val) = (first, y.pop().unwrap()) {
                 x.insert(key, val);
                 Vl(Values::Map(x))
             } else {
@@ -272,7 +273,8 @@ fn map_concat_array(mut map: HashMap<String, Values>,
     for elem in array.into_iter() {
         if let Values::Tuple(mut pair) = elem {
             if pair.len() == 2 {
-                if let (Values::Str(key), val) = (pair.swap_remove(0), pair.pop().unwrap()) {
+                let first = pair.swap_remove(0);
+                if let (Values::Str(key), val) = (first, pair.pop().unwrap()) {
                     map.insert(key, val);
                 } else {
                     return inv_arg("map @", 

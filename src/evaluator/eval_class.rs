@@ -159,8 +159,13 @@ fn process_fn_mem(mems: HashMap<String, Member>) -> HashMap<String, Member> {
 fn add_mems_to_scope(mems: &HashMap<String, Member>, scope: &mut Scope, mut_obj: bool) {
     for (name, Member {val, is_var, is_pub: _}) in mems.iter() {
         let var = *is_var && mut_obj;
-        scope.add(name.clone(), Values::Ref(val.clone(), var), var);
-        scope.add(format!("self::{}", name), Values::Ref(val.clone(), var), var);
+        let val_to_add = if let Values::Ref(ptr, mt) = &*val.borrow() {
+            Values::Ref(ptr.clone(), var && *mt)
+        } else {
+            Values::Ref(val.clone(), var)
+        };
+        //scope.add(name.clone(), val_to_add.clone(), var);
+        scope.add(format!("self::{}", name), val_to_add, var);
     }
 }
 
@@ -189,8 +194,13 @@ fn get_class_ctor(mems: HashMap<String, Member>, class: &SaplStruct, scope: &mut
         let name = name.clone();
         if let Some(Values::Func(ps, body, fn_scope, pce)) = ctor {
             for (k, v) in &mems {
-                fn_scope.borrow_mut().add(k.to_owned(), Values::Ref(v.val.clone(), true), true);
-                fn_scope.borrow_mut().add(format!("self::{}", k), Values::Ref(v.val.clone(), true), true);
+                let val_to_add = if let Values::Ref(ptr, _) = &*v.val.borrow() {
+                    Values::Ref(ptr.clone(), true)
+                } else {
+                    Values::Ref(v.val.clone(), true)
+                };
+                //fn_scope.borrow_mut().add(k.to_owned(), val_to_add.clone(), true);
+                fn_scope.borrow_mut().add(format!("self::{}", k), val_to_add, true);
             }
             match apply_function(&Values::Func(ps, body, fn_scope, pce), args, false, false) {
                 Vl(_) => (),

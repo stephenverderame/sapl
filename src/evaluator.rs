@@ -5,6 +5,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 mod environment;
 use environment::*;
+pub use environment::{Scope, Environment};
 mod std_sapl;
 use std_sapl::type_of;
 mod exn;
@@ -22,13 +23,15 @@ use eval_functions::*;
 mod eval_class;
 use eval_class::*;
 
+pub use std_sapl::get_std_environment;
+
 /// Evaluates a SAPL AST
 pub fn evaluate(ast: &Ast) -> Res {
     eval(ast, &mut std_sapl::get_std_environment())
 }
 
 /// Evaluates the ast to a value
-fn eval(ast: &Ast, scope: &mut impl Environment) -> Res {
+pub fn eval(ast: &Ast, scope: &mut impl Environment) -> Res {
     match ast {
         Ast::VFloat(x) => Vl(Values::Float(*x)),
         Ast::VInt(x) => Vl(Values::Int(*x)),

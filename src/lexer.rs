@@ -356,8 +356,19 @@ impl TokenizerFSM {
         if !self.input.is_ascii() {
             None
         } else {
-            Some(Tokens::TString(self.input.clone()))
+            TokenizerFSM::str_from_escape_codes(self.input.clone())
         }
+    }
+
+    fn str_from_escape_codes(string: String) -> Option<Tokens> {
+        use regex::Regex;
+        let string = Regex::new(r#"(\b|^|\s)\\t"#).unwrap().replace_all(&string, "\t");
+        let string = Regex::new(r#"(\b|^|\s)\\r"#).unwrap().replace_all(&string, "\r");
+        let string = Regex::new(r#"(\b|^|\s)\\n"#).unwrap().replace_all(&string, "\n");
+        let string = Regex::new(r#"\\\\"#).unwrap().replace_all(&string, "\\");
+        let string = Regex::new(r#"\\'"#).unwrap().replace_all(&string, "'");
+        let string = Regex::new(r#"\\""#).unwrap().replace_all(&string, "\"");
+        Some(Tokens::TString(string.to_string()))
     }
 
     /// True if `c` is a character used in operators

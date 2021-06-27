@@ -5,8 +5,11 @@ use super::Values;
 use super::exn::*;
 use rand::Rng;
 use std::rc::Rc;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use super::eval_class::Class;
+use std::fs;
+use std::io::Write;
 
 use super::Res::Vl;
 
@@ -25,6 +28,12 @@ pub fn get_std_environment() -> Scope {
     add_func(&mut scope, "array::remove", arr_remove, 2);
     add_func(&mut scope, "map::insert", map_insert, 2);
     add_func(&mut scope, "map::remove", map_remove, 2);
+    add_func(&mut scope, "template", template_file, 2);
+    add_func(&mut scope, "cin_line", eval_rdline, 0);
+    add_func(&mut scope, "cout", eval_cout, 1);
+    add_func(&mut scope, "coutln", eval_cout_ln, 1);
+    add_func(&mut scope, "print", eval_cout, 1);
+    add_func(&mut scope, "println", eval_cout_ln, 1);
     scope
 }
 
@@ -55,7 +64,9 @@ pub fn type_of(v: &Values) -> String {
     }
 }
 
-fn add_func(scope: &mut Scope, name: &str, func: fn(Vec<Values>) -> Res, min_args: usize) {
+fn add_func(scope: &mut Scope, name: &str, 
+    func: fn(Vec<Values>) -> Res, min_args: usize) 
+{
     scope.add(name.to_owned(), Values::RustFunc(Rc::new(func), min_args), false);
 }
 
@@ -86,7 +97,8 @@ fn eval_len(args: Vec<Values>) -> Res {
 fn eval_rand(mut args: Vec<Values>) -> Res {
     let mut rng = rand::thread_rng();
     if args.len() == 2 {
-        match (args.swap_remove(0), args.pop().unwrap()) {
+        let first = args.swap_remove(0);
+        match (first, args.pop().unwrap()) {
             (Values::Int(min), Values::Int(max)) =>
                  Vl(Values::Int(rng.gen_range(min..max))),
             (Values::Float(min), Values::Float(max)) =>
@@ -217,7 +229,8 @@ fn arr_insert(args: Vec<Values>) -> Res {
     eval_dot_func(args, 2, "array::insert", true, 
     Box::new(|val : &mut Values, mut args: Vec<Values>| -> Res {
         if let Values::Array(val) = val {
-            match (args.swap_remove(0), args.pop().unwrap()) {
+            let first = args.swap_remove(0);
+            match (first, args.pop().unwrap()) {
                 (Values::Int(idx), v) if idx >= 0 && idx < val.len() as i32 =>
                     val.insert(idx as usize, v),
                 (Values::Int(idx), v) if idx >= val.len() as i32 =>
@@ -237,7 +250,8 @@ fn arr_set(args: Vec<Values>) -> Res {
     eval_dot_func(args, 2, "array::set", true, 
     Box::new(|val : &mut Values, mut args: Vec<Values>| -> Res {
         if let Values::Array(val) = val {
-            match (args.swap_remove(0), args.pop().unwrap()) {
+            let first = args.swap_remove(0);
+            match (first, args.pop().unwrap()) {
                 (Values::Int(idx), v) if idx >= 0 && idx < val.len() as i32 =>
                     val[idx as usize] = v,
                 (Values::Int(_), _) => return str_exn(IDX_BNDS),
@@ -300,7 +314,8 @@ fn map_insert_helper(map: &mut HashMap<String, Values>, mut args: Vec<Values>) -
     if args.len() == 1 {
         match args.pop().unwrap() {
             Values::Tuple(mut x) if x.len() == 2 => {
-                match (x.swap_remove(0), x.pop().unwrap()) {
+                let first = x.swap_remove(0);
+                match (first, x.pop().unwrap()) {
                     (Values::Str(x), val) => {
                         map.insert(x, val);
                         Vl(Values::Unit)
@@ -313,7 +328,8 @@ fn map_insert_helper(map: &mut HashMap<String, Values>, mut args: Vec<Values>) -
         }
     }
     else if args.len() == 2 {
-        match (args.swap_remove(0), args.pop().unwrap()) {
+        let first = args.swap_remove(0);
+        match (first, args.pop().unwrap()) {
             (Values::Str(key), val) => {
                 map.insert(key, val);
                 Vl(Values::Unit)
@@ -339,4 +355,70 @@ fn map_remove(args: Vec<Values>) -> Res {
             Vl(Values::Unit)
         } else { inv_arg("map::remove", None) }      
     }))
+}
+
+fn template_file(mut args: Vec<Values>) -> Res {
+    if args.len() == 2 {
+        let first = args.swap_remove(0);
+        eval_template(first, args.pop().unwrap(), "$$")
+    } else if args.len() == 3 {
+        if let Some(Values::Str(delim)) = args.pop() {
+            let first = args.swap_remove(0);
+            eval_template(first, args.pop().unwrap(), &delim[..])
+        } else {
+            inv_arg("template", None)
+        }
+    } else {
+        inv_arg("template", None)
+    }
+}
+
+fn eval_template(file: Values, map: Values, delim: &str) -> Res {
+    match (file, map) {
+        (Values::Str(file_name), Values::Map(map)) => {
+            if let Ok(file) = fs::File::open(&file_name) {
+                let scope = append_map_to_std_env(*map);
+                let res = Rc::new(RefCell::new(Vec::<u8>::new()));
+                crate::parse_sapl_inplace(file, res.clone(), delim, Some(scope));               
+                let x = Vl(Values::Str(String::from_utf8(res.borrow().clone()).unwrap())); x
+            } else {
+                str_exn(&format!("{} cannot be opened", file_name))
+            }
+        },
+        _ => inv_arg("template", None),
+    }
+}
+
+fn append_map_to_std_env(map: HashMap<String, Values>) -> Scope {
+    let mut sc = get_std_environment();
+    for (name, val) in map {
+        sc.add(name, val, false);
+    }
+    sc
+}
+
+fn eval_rdline(_:Vec<Values>) -> Res {
+    use std::io;
+    let mut buf = String::new();
+    io::stdin().read_line(&mut buf).unwrap();
+    Vl(Values::Str(buf))
+}
+
+fn eval_cout(args: Vec<Values>) -> Res {
+    print_args(args, &mut std::io::stdout(), false);
+    Vl(Values::Unit)
+}
+
+fn eval_cout_ln(args: Vec<Values>) -> Res {
+    print_args(args, &mut std::io::stdout(), true);
+    Vl(Values::Unit)
+}
+
+fn print_args(args: Vec<Values>, out: &mut impl Write, newline: bool) {
+    for arg in args {
+        out.write_all(format!("{:?}", arg).as_bytes()).unwrap();
+    }
+    if newline {
+        out.write_all("\n".as_bytes()).unwrap()
+    }
 }

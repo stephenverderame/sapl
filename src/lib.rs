@@ -4,18 +4,109 @@ mod evaluator;
 
 pub use evaluator::Values;
 pub use evaluator::Res;
+use evaluator::Scope;
+use evaluator::Environment;
 use std::io::Read;
+use std::io::Write;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 /// Parses sapl code from an input stream
 /// The input stream must contain only sapl code
 pub fn parse_sapl(input: impl Read) -> Res {
+    parse_and_eval(input, None)
+}
+
+fn parse_and_eval(input: impl Read, scope: Option<Scope>) -> Res {
     let mut tokens = lexer::tokenize(input);
     let ast = parser::parse(&mut tokens);
     if let Ok(ast) = ast {
-        evaluator::evaluate(&ast)
+        match scope {
+            Some(mut env) => evaluator::eval(&ast, &mut env),
+            _ => evaluator::evaluate(&ast),
+        }
     } else {
         Res::Bad(ast.unwrap_err())
     }
+}
+
+/// Parses sapl that is in between `delim`
+/// Streams `input` to `output` and inserts the result of sapl code
+/// `Unit` values are not written, and Strings do not have quotes
+/// Requires `delim` is >= 2 characters
+/// `delim` can be escaped by prepending backslashed before each character
+pub fn preprocess_sapl(input: impl Read, output: Rc<RefCell<dyn Write>>, delim: &str) {
+    let scope = evaluator::get_std_environment();
+    parse_sapl_inplace(input, output, delim, Some(scope))
+}
+
+fn add_lambda(scope: &mut Scope, name: &str, func: Rc<dyn Fn(Vec<Values>) -> Res>, min_args: usize) {
+    scope.add(name.to_owned(), Values::RustFunc(func, min_args), false);
+}
+
+/// Parses sapl from `input` in between `delim` and writes the result to `output`
+/// `env` - the environment to evaluate the code in or `None` to use the standard environment
+fn parse_sapl_inplace(mut input: impl Read, output: Rc<RefCell<dyn Write>>, delim: &str, 
+    env: Option<Scope>) 
+{
+    let mut buffer = String::new();
+    input.read_to_string(&mut buffer).unwrap();
+    let mut is_sapl = false;
+    let escaped = escaped_delim(delim);
+    let env = augment_environment(&output, env);
+    for ln in buffer.split(delim) {
+        if is_sapl {
+            match parse_and_eval(ln.as_bytes(), env.clone()) {
+                Res::Vl(val) | Res::Ret(val) | Res::Exn(val) => {
+                    if val != Values::Unit {
+                        output.borrow_mut()
+                            .write_all(format!("{:?}", val).as_bytes()).unwrap();
+                    }
+                },
+                e => {
+                    output.borrow_mut()
+                        .write_all(format!("{:?}", e).as_bytes()).unwrap();
+                },
+            }
+        } else {
+            let res = ln.replace(delim, &escaped);
+            output.borrow_mut().write_all(res.as_bytes()).unwrap();
+        }
+        is_sapl = !is_sapl;
+    }
+}
+
+fn augment_environment(output: &Rc<RefCell<dyn Write>>, scope: Option<Scope>) -> Option<Scope> {
+    use evaluator::Res::Vl;
+    if let Some(mut scope) = scope {
+        let write = output.clone();
+        add_lambda(&mut scope, "print", Rc::new(move |args: Vec<Values>| -> Res {
+            for arg in args {
+                write.borrow_mut().write_all(format!("{:?}", arg).as_bytes())
+                    .unwrap();
+            }
+            Vl(Values::Unit)
+        }), 1);
+        let write = output.clone();
+        add_lambda(&mut scope, "println", Rc::new(move |args: Vec<Values>| -> Res {
+            for arg in args {
+                write.borrow_mut().write_all(format!("{:?}", arg).as_bytes())
+                    .unwrap();
+            }
+            write.borrow_mut().write_all("\n".as_bytes()).unwrap();
+            Vl(Values::Unit)
+        }), 1);
+        Some(scope)
+    } else { None }
+}
+
+fn escaped_delim(delim: &str) -> String {
+    let mut escaped = String::new();
+    for c in delim.as_bytes() {
+        escaped.push(*c as char);
+        escaped.push('\\');
+    }
+    escaped
 }
 
 #[cfg(test)]
@@ -1292,15 +1383,53 @@ mod tests {
 
         let little_jimmy = Baby('Jimmy');
         let bobby = Child('Bobby');
-        [little_jimmy.speak(), *little_jimmy.age, bobby.speak()]
+        [little_jimmy.speak(), *little_jimmy.age, bobby.speak(), *bobby.age]
         "#, 
-        "['Goo-goo-ga-ga', 0, 'Hello. I am Bobby']");
+        "['Goo-goo-ga-ga', 0, 'Hello. I am Bobby', 10]");
+
+        assert_sapl_eq(r#"
+        type Counter {
+            def var count = &&0
+
+            fun inc {
+                count <- *count + 1
+            }
+
+            pub fun get_count {
+                *count
+            }
+        }
+
+        struct Obj : Counter {
+
+            pub def var a_num
+
+            fun Obj {
+                inc();
+                do_it()
+            }
+
+            fun do_it {
+                fun call_it {
+                    a_num <- 10
+                }
+
+                call_it()
+            }
+            
+        }
+
+        Obj();
+        Obj();
+        let a = Obj();
+        (a.get_count(), *a.a_num)
+        "#, "(3, 10)")
     }
 
     #[test]
     fn cast_test() {
         assert_sapl_eq("true as int", "1");
-        assert_sapl_eq("[43, 10, 'Hello'] as string", r#""[43, 10, 'Hello']""#);
+        assert_sapl_eq("[43, 10, 'Hello'] as string", r#""[43, 10, Hello]""#);
         assert_sapl_eq("'3400' as int", "3400");
         assert_sapl_eq(r#"
         let act = {'name': 'Key', 'age': 53} as array;
@@ -1322,6 +1451,22 @@ mod tests {
         assert_sapl_eq(r#"
         [50, 10].array::contains(10)
         "#, "true");
+    }
+
+    #[test]
+    fn template_test() {
+        assert_sapl_eq(r#"
+        template("template_test1.md", {'name': 'Joe', 'count': 10})
+        "#, "'Hi! My name is Joe\\nJoe\\nJoe\\nJoe\\nJoe\\nJoe\\nJoe\\nJoe\\nJoe\\nJoe\\n'");
+    }
+
+    #[test]
+    fn string_test() {
+        use Res::Vl;
+        assert_eval_eq(r#"'\n'"#, Vl(Values::Str("\n".to_owned())));
+        assert_eval_eq(r#"'Hello\n'"#, Vl(Values::Str("Hello\n".to_owned())));
+        assert_eval_eq(r#"'\tHello\nGoodbye\n'"#, Vl(Values::Str("\tHello\nGoodbye\n".to_owned())));
+        assert_eval_eq(r#"'\\n'"#, Vl(Values::Str("\\n".to_owned())));
     }
 
     #[test]

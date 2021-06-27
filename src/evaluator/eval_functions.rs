@@ -44,10 +44,10 @@ fn sapl_func_to_val(name: &String, params: &Vec<String>, ast: &Ast, pce: &Option
     let nw_scope = Rc::new(RefCell::new(std_sapl::get_std_environment()));
     let post = if pce.is_some() {
         let ptr = pce.as_ref().unwrap();
-        capture_into_scope(&*ptr, &mut nw_scope.borrow_mut(), scope);
+        capture_into_scope(&*ptr, &mut nw_scope.borrow_mut(), scope, false);
         Some(*ptr.clone())
     } else { None };
-    capture_into_scope(ast, &mut nw_scope.borrow_mut(), scope);
+    capture_into_scope(ast, &mut nw_scope.borrow_mut(), scope, false);
     let func = Values::Func(params.clone(), ast.clone(), nw_scope.clone(), post);
     nw_scope.borrow_mut().add(name.to_string(), func.clone(), false);
     Vl(func)
@@ -63,64 +63,69 @@ pub fn eval_lambda(params: &Vec<String>, ast: &Ast, scope: &mut impl Environment
     let nw_scope = Rc::new(RefCell::new(std_sapl::get_std_environment()));
     nw_scope.borrow_mut().add("this".to_owned(), 
         Values::Func(params.clone(), ast.clone(), nw_scope.clone(), None), false);
-    capture_into_scope(ast, &mut nw_scope.borrow_mut(), scope);
+    capture_into_scope(ast, &mut nw_scope.borrow_mut(), scope, false);
     Vl(Values::Func(params.clone(), ast.clone(), nw_scope, None))
 }
 
 /// Searches for names in `ast` and captures them by copying their corresponding value from
 /// `old_scope` into `scope`
-fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment) {
+/// `dynamic_capture` - true if capturing at runtime and thus is only looking for names in a dynamic namespace
+/// (such as self::)
+fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment, dynamic_capture: bool) {
     match ast {
         Ast::Name(x) => {
             if let Some((val, mtble)) = old_scope.find(x) {
-                scope.add(x.to_string(), val.borrow().clone(), mtble)
+                if !dynamic_capture { scope.add(x.to_string(), val.borrow().clone(), mtble) }
+            } 
+            if let Some((val, mtble)) = old_scope.find(&format!("self::{}", x)) {
+                scope.add(format!("self::{}", x), val.borrow().clone(), mtble)
             }
         },
         Ast::If(guard, body, other) | Ast::For(_, guard, other, body) => {
-            capture_into_scope(&*guard, scope, old_scope);
-            capture_into_scope(&*body, scope, old_scope);
+            capture_into_scope(&*guard, scope, old_scope, dynamic_capture);
+            capture_into_scope(&*body, scope, old_scope, dynamic_capture);
             if let Some(x) = other {
-                capture_into_scope(&*x, scope, old_scope);
+                capture_into_scope(&*x, scope, old_scope, dynamic_capture);
             }
         },
         Ast::Seq(children) | Ast::Array(children) | Ast::Tuple(children) => {
             for node in children {
-                capture_into_scope(&*node, scope, old_scope);
+                capture_into_scope(&*node, scope, old_scope, dynamic_capture);
             }
         },
         Ast::Let(_, ast) | Ast::Uop(ast, _) | Ast::Lambda(_, ast) => 
-            capture_into_scope(&*ast, scope, old_scope),
+            capture_into_scope(&*ast, scope, old_scope, dynamic_capture),
         Ast::Func(.., ast, condition) => {
-            capture_into_scope(&*ast, scope, old_scope);
+            capture_into_scope(&*ast, scope, old_scope, dynamic_capture);
             if let Some(ast) = condition {
-                capture_into_scope(&*ast, scope, old_scope);
+                capture_into_scope(&*ast, scope, old_scope, dynamic_capture);
             }
         },
         Ast::FnApply(func, args) => {
-            capture_into_scope(&*func, scope, old_scope);
+            capture_into_scope(&*func, scope, old_scope, dynamic_capture);
             for expr in args {
-                capture_into_scope(&*expr, scope, old_scope);
+                capture_into_scope(&*expr, scope, old_scope, dynamic_capture);
             }
         },
         Ast::While(one, two) | Ast::Bop(one, _, two ) 
         | Ast::Try(one, _, two) => {
-            capture_into_scope(one, scope, old_scope);
-            capture_into_scope(two, scope, old_scope);
+            capture_into_scope(one, scope, old_scope, dynamic_capture);
+            capture_into_scope(two, scope, old_scope, dynamic_capture);
         },
         Ast::Map(children) => {
             for (key, val) in &**children {
-                capture_into_scope(val, scope, old_scope);
-                capture_into_scope(key, scope, old_scope);
+                capture_into_scope(val, scope, old_scope, dynamic_capture);
+                capture_into_scope(key, scope, old_scope, dynamic_capture);
             }
         },
         Ast::Struct(SaplStruct {name: _, publics, privates, parents: _, ctor, dtor}) |
         Ast::Type(SaplStruct {name: _, publics, privates, parents: _, ctor, dtor}) => {
             for mem in publics.iter().chain(privates.iter()) {
                 let (_, _, ast) = mem;
-                capture_scope_from_box(ast, scope, old_scope);
+                capture_scope_from_box(ast, scope, old_scope, dynamic_capture);
             }
-            capture_scope_from_box(ctor, scope, old_scope);
-            capture_scope_from_box(dtor, scope, old_scope);
+            capture_scope_from_box(ctor, scope, old_scope, dynamic_capture);
+            capture_scope_from_box(dtor, scope, old_scope, dynamic_capture);
         }, 
         Ast::Placeholder | Ast::VInt(_) | Ast::VStr(_)
         | Ast::VBool(_) | Ast::VFloat(_) => (),
@@ -128,9 +133,12 @@ fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment
     }
 }
 
-fn capture_scope_from_box(ast: &Option<Box<Ast>>, scope: &mut Scope, old_scope: &impl Environment) {
+/// @see capture_into_scope
+fn capture_scope_from_box(ast: &Option<Box<Ast>>, scope: &mut Scope, 
+    old_scope: &impl Environment, dynamic_capture: bool) 
+{
     if let Some(ast) = ast {
-        capture_into_scope(&**ast, scope, old_scope);
+        capture_into_scope(&**ast, scope, old_scope, dynamic_capture);
     }
 }
 
@@ -156,8 +164,19 @@ pub fn eval_fn_app(func: &Ast, args: &Vec<Box<Ast>>, scope: &mut impl Environmen
         val_args.push(val);
         None
     });
+    add_members_to_fn_scope(&mut func.borrow_mut(), scope);
     let x = apply_function(&func.borrow(), val_args, false, false); x
 
+}
+
+/// Finds all names in the scope under the `self` namespace
+/// and adds them to `func`
+fn add_members_to_fn_scope(func: &mut Values, scope: &impl Environment) {
+    if let Values::Func(_, ast, fn_scope, _) = &func {
+        capture_into_scope(ast, &mut fn_scope.borrow_mut(), scope, true)
+    } else if let Values::Ref(ptr, _) = &func {
+        add_members_to_fn_scope(&mut ptr.borrow_mut(), scope)
+    }
 }
 
 /// Applies `args` to the function `func`
