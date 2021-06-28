@@ -647,7 +647,7 @@ mod tests {
         let map = map @ [('name', 'Alex'), ('age', 19)];
         if map.contains('address', 'name'):
             map.contains('age', 'ssn')
-        else
+        else:
             map
         "#, Values::Bool(false));
 
