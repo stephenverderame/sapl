@@ -8,8 +8,9 @@ use super::eval_functions::apply_function;
 use std::cell::RefCell;
 use std::rc::Rc;
 use crate::parser::SaplStruct;
+use std::fmt;
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq)]
 pub struct Member {
     pub val: Rc<RefCell<Values>>,
     pub is_var: bool,
@@ -27,12 +28,25 @@ impl Clone for Member {
     }
 }
 
-#[derive(PartialEq, Clone, Debug)]
+impl std::fmt::Debug for Member {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{{ val: {:?}, var: {}, pub: {} }}", &*self.val.borrow(),
+            self.is_var, self.is_pub)
+    }
+}
+
+#[derive(PartialEq, Clone)]
 pub struct Class {
     pub name: String,
     pub members: HashMap<String, Member>,
     pub dtor: Option<Values>,
 
+}
+
+impl std::fmt::Debug for Class {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {{ {:?}, dtor: {:?} }}", self.name, self.members, self.dtor)
+    }
 }
 
 /*
@@ -94,6 +108,7 @@ fn get_object_members(object: &SaplStruct, scope: &mut impl Environment)
     Ok(mems)
 }
 
+
 fn iter_members(mems: &mut HashMap<String, Member>, container: &Vec<(String, bool, Option<Box<Ast>>)>, is_pub: bool, scope: &mut impl Environment) 
     -> Option<Res>
 {
@@ -120,12 +135,15 @@ fn iter_members(mems: &mut HashMap<String, Member>, container: &Vec<(String, boo
     None
 }
 
+/// Processes object members by iterating through and converting functions 
+/// to rust functions with all members added to scope
+/// The new function will wrap the old one and expect a self reference as the first parameter to 
 fn process_fn_mem(mems: HashMap<String, Member>) -> HashMap<String, Member> {
     let mut map = HashMap::<String, Member>::new();
     for pair in mems {
         match pair {           
             (k, Member {val, is_var, is_pub}) if matches!(&*val.borrow(), Values::Func(..)) => {
-                if let Values::Func(params, body, scope, pce) = &*val.borrow_mut() {
+                if let Values::Func(params, body, scope, pce) = &*val.borrow() {
                     let min_args = params.len() + 1;
                     let params = params.clone();
                     let body = body.clone();
@@ -134,9 +152,11 @@ fn process_fn_mem(mems: HashMap<String, Member>) -> HashMap<String, Member> {
                     let rf = move |mut args: Vec<Values>| -> Res {
                         let this = args.remove(0);
                         if let Values::Ref(ptr, mtble) = this {
-                            if let Values::Object(ptr) = &mut *ptr.borrow_mut() {
-                                let Class {name:_, members, ..} = &**ptr;
-                                add_mems_to_scope(members, &mut *scope.borrow_mut(), mtble);
+                            if let Values::Object(ptr, ctx) = &*ptr.borrow() {
+                                let is_ctor = ctx == &CallingContext::Constructor;
+                                let mtble = mtble || is_ctor;
+                                let nw_ctx = if is_ctor { *ctx } else { CallingContext::SelfCall };
+                                scope.borrow_mut().add("self".to_owned(), Values::Object(ptr.clone(), nw_ctx), mtble);
                             } else { panic!("Self is not the first param. Got {:?} and {:?}", ptr, args); }
                         } else { panic!("Self is not the first param. Got {:?} and {:?}", this, args); }
                         apply_function(&Values::Func(params.clone(), 
@@ -156,28 +176,10 @@ fn process_fn_mem(mems: HashMap<String, Member>) -> HashMap<String, Member> {
     map
 }
 
-fn add_mems_to_scope(mems: &HashMap<String, Member>, scope: &mut Scope, mut_obj: bool) {
-    for (name, Member {val, is_var, is_pub: _}) in mems.iter() {
-        let var = *is_var && mut_obj;
-        let val_to_add = if let Values::Ref(ptr, mt) = &*val.borrow() {
-            Values::Ref(ptr.clone(), var && *mt)
-        } else {
-            Values::Ref(val.clone(), var)
-        };
-        //scope.add(name.clone(), val_to_add.clone(), var);
-        scope.add(format!("self::{}", name), val_to_add, var);
-    }
-}
 
 fn get_class_ctor(mems: HashMap<String, Member>, class: &SaplStruct, scope: &mut impl Environment) -> Res {
     let ctor = if let Some(func) = &class.ctor {
         match eval_functions::func_to_val(&*func, scope) {
-            Vl(v) => Some(v),
-            e => return e,
-        }
-    } else { None };
-    let dtor = if let Some(func) = &class.dtor {
-        match eval(&*func, scope) {
             Vl(v) => Some(v),
             e => return e,
         }
@@ -190,29 +192,25 @@ fn get_class_ctor(mems: HashMap<String, Member>, class: &SaplStruct, scope: &mut
     let func = move |args: Vec<Values>| -> Res {
         let mems = mems.clone();
         let ctor = ctor.clone();
-        let dtor = dtor.clone();
         let name = name.clone();
-        if let Some(Values::Func(ps, body, fn_scope, pce)) = ctor {
-            for (k, v) in &mems {
-                let val_to_add = if let Values::Ref(ptr, _) = &*v.val.borrow() {
-                    Values::Ref(ptr.clone(), true)
-                } else {
-                    Values::Ref(v.val.clone(), true)
-                };
-                //fn_scope.borrow_mut().add(k.to_owned(), val_to_add.clone(), true);
-                fn_scope.borrow_mut().add(format!("self::{}", k), val_to_add, true);
+        let self_obj = Rc::new(RefCell::new(
+            Class {
+                name,
+                members: process_fn_mem(mems),
+                dtor: None,
             }
-            match apply_function(&Values::Func(ps, body, fn_scope, pce), args, false, false) {
+        ));
+        if let Some(Values::Func(ps, body, fn_scope, pce)) = ctor {
+            fn_scope.borrow_mut().add("self".to_owned(), 
+                Values::Object(self_obj.clone(), CallingContext::Constructor), true);
+            match apply_function(&Values::Func(ps, body, fn_scope, pce), 
+                args, false, false) 
+            {
                 Vl(_) => (),
                 e => return e,
             }
         }
-        Vl(Values::Object(Box::new(
-        Class {
-            name,
-            members: process_fn_mem(mems),
-            dtor,
-        })))
+        Vl(Values::Object(self_obj, CallingContext::Public))
 
     };
     Vl(Values::RustFunc(Rc::new(func), min_args))

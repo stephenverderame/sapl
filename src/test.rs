@@ -791,6 +791,13 @@ mod tests {
 
         get_add(0) + get_add(1) + get_add(2)
         "#, Values::Str("Hello 103.14".to_owned()));
+
+        assert_sapl_eq(r#"
+        fun get_some -> some {
+            0
+        }
+        get_some()
+        "#, "0");
     }
 
     #[test]
@@ -1112,18 +1119,18 @@ mod tests {
             pub def name, var age = 0
 
             fun Person name {
-                self::name <- name;
-                ssn <- 156
+                self.name <- name;
+                self.ssn <- 156
             }
 
             pub fun greet {
-                "Hello! My name is " + *name
-                + " and I am " + *age
+                "Hello! My name is " + *self.name
+                + " and I am " + *self.age
                 + " years old."
             }
 
             pub fun verify test_ssn {
-                *ssn == test_ssn
+                *self.ssn == test_ssn
             }
         }
 
@@ -1137,11 +1144,11 @@ mod tests {
             def var species
 
             fun Animal species {
-                self::species <- species
+                self.species <- species
             }
 
             pub fun mutate species {
-                self::species <- species
+                self.species <- species
             }
         }
 
@@ -1222,7 +1229,7 @@ mod tests {
             def secret = 0
 
             fun get_password {
-                secret
+                self.secret
             }
         }
 
@@ -1246,7 +1253,7 @@ mod tests {
             pub def name, age
 
             pub fun speak {
-                "Hello. I am " + *name 
+                "Hello. I am " + *self.name 
             }
         }
 
@@ -1254,8 +1261,8 @@ mod tests {
 
         struct Baby : Person {
             fun Baby name {
-                age <- 0;
-                self::name <- name
+                self.age <- 0;
+                self.name <- name
             }
 
             pub fun speak {
@@ -1265,8 +1272,8 @@ mod tests {
 
         struct Child : my_type {
             fun Child name {
-                age <- 10;
-                self::name <- name
+                self.age <- 10;
+                self.name <- name
             }
         }
 
@@ -1281,11 +1288,11 @@ mod tests {
             def var count = &&0
 
             fun inc {
-                count <- *count + 1
+                self.count <- *self.count + 1
             }
 
             pub fun get_count {
-                *count
+                *self.count
             }
         }
 
@@ -1294,13 +1301,13 @@ mod tests {
             pub def var a_num
 
             fun Obj {
-                inc();
-                do_it()
+                self.inc();
+                self.do_it()
             }
 
             fun do_it {
                 fun call_it {
-                    a_num <- 10
+                    self.a_num <- 10
                 }
 
                 call_it()
@@ -1325,7 +1332,7 @@ mod tests {
         let exp = [('name', 'Key'), ('age', 53)];
         act == exp || act == exp[exp.len() .. 0]"#, "true");
 
-        assert_sapl_eq("5 is Some", "true");
+        assert_sapl_eq("5 is some", "true");
         assert_sapl_eq("(2, 5) is tuple_2", "true");
         assert_sapl_eq("[100, 20] is map", "false");
     }
@@ -1398,6 +1405,34 @@ mod tests {
 
         examples::im_in_test::extern_func(10, 20)
         "#, "23");
+    }
+
+    #[test]
+    fn more_class_tests() {
+        assert_sapl_eq(r#"
+        struct Class {
+            pub def a_num
+
+            fun Class x {
+                self.a_num <- self.setup(x + 20)               
+            }
+
+            fun setup y {
+                self.do_it(y * 2)
+            }
+
+            fun do_it z {
+                z - 3
+            }
+
+            pub fun do_it_again x {
+                self.setup(x + 20)
+            }
+        }
+
+        let c  = Class(20);
+        *c.a_num + c.do_it_again(20)
+        "#, "154");
     }
 
     #[test]

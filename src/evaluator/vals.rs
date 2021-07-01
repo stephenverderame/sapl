@@ -6,6 +6,11 @@ use std::collections::HashMap;
 use super::environment::{Scope, Environment};
 use super::eval_class::Class;
 
+#[derive(Clone, PartialEq, Copy)]
+pub enum CallingContext {
+    Constructor, SelfCall, Public
+}
+
 #[derive(Clone)]
 pub enum Values {
     Int(i32),
@@ -21,7 +26,7 @@ pub enum Values {
     Placeholder,
     Ref(Rc<RefCell<Values>>, bool),
     RustFunc(Rc<dyn Fn(Vec<Values>) -> Res>, usize),
-    Object(Box<Class>),
+    Object(Rc<RefCell<Class>>, CallingContext),
     Type(Rc<Class>),
 }
 
@@ -52,7 +57,7 @@ impl PartialEq for Values {
             (Range(a, b), Range(c, d)) => a == c && b == d,
             (Unit, Unit) => true,
             (Placeholder, Placeholder) => true,
-            (Object(a), Object(b)) => a == b,
+            (Object(a, _), Object(b, _)) => a == b,
             (Type(a), Type(b)) => a == b,
             _ => false,
         }
@@ -71,11 +76,11 @@ impl std::fmt::Debug for Values {
             Float(x) => write!(f, "{}", x),
             Array(x) | Tuple(x) => write!(f, "{:?}", x),
             Map(x) => write!(f, "{:?}", x),
-            Ref(x, _) => write!(f, "ref {:?}", x),
+            Ref(x, _) => write!(f, "ref {:?}", &*x.borrow()),
             Placeholder => write!(f, "<placeholder>"),
             Unit => write!(f, "<unit>"),
             Range(a, b) => write!(f, "{:?}..{:?}", a, b), 
-            Object(a) => write!(f, "Object {{ {:?} }}", a),
+            Object(a, _) => write!(f, "Object {{ {:?} }}", &*a.borrow()),
             Type(a) => write!(f, "Type {{ {:?} }}", a),
         }
     }
@@ -96,7 +101,7 @@ impl std::fmt::Display for Values {
             Ref(x, _) => write!(f, "ref {}", &*x.borrow()),
             Placeholder | Unit => Ok(()),
             Range(a, b) => write!(f, "{}..{}", &*a, &*b), 
-            Object(a) => write!(f, "Object {{ {:?} }}", a),
+            Object(a, _) => write!(f, "Object {{ {:?} }}", &*a.borrow()),
             Type(a) => write!(f, "Type {{ {:?} }}", a),
         }
     }
@@ -117,7 +122,7 @@ pub fn to_booly(b: &Res) -> Result<bool, String> {
         Vl(Values::Map(x)) if !x.is_empty() => Ok(true),
         Vl(Values::Range(a, b)) if a != b => Ok(true),
         Vl(Values::Func(..)) | Vl(Values::Tuple(..))
-        | Vl(Values::Object(_)) 
+        | Vl(Values::Object(..)) 
         | Vl(Values::Type(_)) => Ok(true),        
         Vl(_) => Ok(false),
         Bad(e) => Err(e.to_string()),

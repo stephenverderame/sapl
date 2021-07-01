@@ -80,8 +80,8 @@ fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment
                 } 
             } else {
                 if let Some((val, mtble)) = old_scope.find(&format!("self::{}", x)) {
-                    println!("Lookup dynamic for {}", x);
-                    scope.add(format!("self::{}", x), val.borrow().clone(), mtble)
+                    scope.add(format!("self::{}", x), val.borrow().clone(), mtble);
+                    println!("Dynamic capture self::{}", x);
                 }
             }
         },
@@ -169,19 +169,8 @@ pub fn eval_fn_app(func: &Ast, args: &Vec<Box<Ast>>, scope: &mut impl Environmen
         val_args.push(val);
         None
     });
-    add_members_to_fn_scope(&mut func.borrow_mut(), scope);
     let x = apply_function(&func.borrow(), val_args, false, false); x
 
-}
-
-/// Finds all names in the scope under the `self` namespace
-/// and adds them to `func`
-fn add_members_to_fn_scope(func: &mut Values, scope: &impl Environment) {
-    if let Values::Func(_, ast, fn_scope, _) = &func {
-        capture_into_scope(ast, &mut fn_scope.borrow_mut(), scope, true)
-    } else if let Values::Ref(ptr, _) = &func {
-        add_members_to_fn_scope(&mut ptr.borrow_mut(), scope)
-    }
 }
 
 /// Applies `args` to the function `func`
@@ -265,6 +254,7 @@ fn apply_rust_function(func: Rc<dyn Fn(Vec<Values>) -> Res>, min_args: usize,
         };
         idx = idx + 1;
     }
+    //println!("Applying rust function with args: {:?}", params);
     if (params.len() < min_args && allow_incomplete)
         || !missing_params.is_empty() || force_partial
     {
@@ -298,13 +288,7 @@ fn check_func_post(result: Values, postcondition: &Option<Ast>, scope: &impl Env
         None => Vl(result),
         Some(ast) => {
             let mut scope = ImmuScope::from(scope);
-            match &result {
-                Values::Float(_) | Values::Int(_) => {
-                    scope.add("number".to_owned(), result.clone(), false);
-                },
-                _ => (),
-            }
-            scope.add(type_of(&result), result.clone(), false);
+            add_type_variables_to_scope(&result, &mut scope);
             scope.add("result".to_owned(), result.clone(), false);
             match eval(&ast, &mut scope) {
                 Vl(_) if matches!(&ast, &Ast::Name(_)) => Vl(result),
@@ -315,5 +299,23 @@ fn check_func_post(result: Values, postcondition: &Option<Ast>, scope: &impl Env
 
             }
         },
+    }
+}
+
+fn add_type_variables_to_scope(val: &Values, scope: &mut impl Environment) {
+    scope.add(type_of(val), val.clone(), false);
+    if val == &Values::Unit {
+        scope.add("none".to_owned(), Values::Unit, false);
+    } else {
+        scope.add("some".to_owned(), val.clone(), false);
+        match val {
+            Values::Float(_) | Values::Int(_) =>
+                scope.add("number".to_owned(), val.clone(), false),
+            Values::Tuple(_) =>
+                scope.add("tuple".to_owned(), val.clone(), false),
+            Values::Object(..) | Values::Type(_) => 
+                scope.add("object".to_owned(), val.clone(), false),
+            _ => (),
+        }
     }
 }

@@ -160,13 +160,17 @@ fn eval_let(names: &Vec<(String, bool)>, ast: &Ast,
 /// Evaluates the unary operator `op left`
 fn eval_uop(left: &Ast, op: &Op, scope: &mut impl Environment) -> Res {
     if op == &Op::Ref || op == &Op::MutRef { return eval_ref(left, op, scope); }
-    match (eval(left, scope), op) {
+    perform_uop(eval(left, scope), op, scope)
+}
+
+fn perform_uop(left: Res, op: &Op, scope: &mut impl Environment) -> Res {
+    match (left, op) {
         (Vl(Values::Bool(x)), Op::Not) => Vl(Values::Bool(!x)),
         (Vl(Values::Int(x)), Op::Neg) | 
         (Vl(Values::Int(x)), Op::Not) => Vl(Values::Int(-x)),
         (Vl(Values::Float(x)), Op::Neg) | 
         (Vl(Values::Float(x)), Op::Not) => Vl(Values::Float(-x)),
-        (Vl(Values::Ref(x, _)), Op::Deref) => Vl(x.borrow().clone()),
+        (Vl(Values::Ref(x, _)), Op::Deref) => deref(x),
         (v, Op::AsBool) => match v {
             Vl(_) | Res::Ret(_) => Vl(Values::Bool(true)),
             Res::Exn(_) | Bad(_) => Vl(Values::Bool(false)),
@@ -177,6 +181,14 @@ fn eval_uop(left: &Ast, op: &Op, scope: &mut impl Environment) -> Res {
         (Vl(v), x) => bad_op(&v, None, *x),
         (e, _) => e,
     }
+}
+
+/// Repeatedly dereferences a ptr and returns a copy of the value
+fn deref(mut ptr: Rc<RefCell<Values>>) -> Res {
+    while let Values::Ref(r, _) = &*ptr.clone().borrow() {
+        ptr = r.clone();
+    }
+    Vl(ptr.borrow().clone())
 }
 
 fn eval_include(path: String, scope: &mut impl Environment) -> Res {
@@ -261,7 +273,10 @@ fn eval_import(file: &str, prefix: &Option<String>, scope: &mut impl Environment
     match std::fs::File::open(file) {
         Ok(file) => {
             let mut env = get_std_environment();
-            crate::parse_and_eval(file, &mut Some(&mut env));
+            match crate::parse_and_eval(file, &mut Some(&mut env)) {
+                Res::Vl(_) | Res::Ret(_) => (),
+                e => return e,
+            };
             let v = env.find_all_in_scope("export");
             for (name, val, var) in v {
                 let name = if let Some(string) = prefix {

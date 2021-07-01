@@ -15,6 +15,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use super::eval_class::Member;
 use super::eval_class::Class;
+use super::vals::CallingContext;
 
 /// Evaluates `left op right`
 /// If `op` is a short circuit operator, only evaluates `left` if the short circuit path is taken
@@ -114,44 +115,61 @@ fn perform_dot_lookup(val: Values, right: &Ast, scope: &mut impl Environment, va
 
 /// Looks up `name` in the context of `val`
 fn lookup(val: &Values, name: &String, scope: &mut impl Environment, val_mut: bool) 
-    -> Option<(Rc<RefCell<Values>>, bool)> 
+    -> Result<(Rc<RefCell<Values>>, bool), String> 
 {
-    let class_name = &super::std_sapl::type_of(val)[..];
+    let class_func_name = get_name_w_type(val, name);
+    if let Values::Ref(ptr, is_var) = &val {
+        lookup(&*ptr.borrow(), name, scope, val_mut && *is_var)
+    }
+    else if let Values::Object(ptr, ctx) = &val {
+        class_lookup(&ptr.borrow(), *ctx, name, val_mut)
+    } 
+    else if let Some((ptr, is_var)) = super::name_lookup(&class_func_name, scope) {    
+        Ok((ptr, is_var && val_mut))
+    } else if let Some((ptr, is_var)) = super::name_lookup(&name, scope) {
+        Ok((ptr, is_var && val_mut))
+    } else {
+        Err(format!("Could not find name: {}", name))
+    }
+}
+
+/// Looks up `name` on an object
+fn class_lookup(class: &Class, ctx: CallingContext, name: &String, val_mut: bool) 
+    -> Result<(Rc<RefCell<Values>>, bool), String>
+{
+    let Class {name: c_name, members, ..} = class;
+    if let Some(Member {val, is_var, is_pub}) = members.get(name) {
+        if !is_pub && ctx == CallingContext::Public { 
+            Err(format!("Attempt to read private value {} from public context", name))
+        }
+        else {
+            let is_mut = *is_var && val_mut || ctx == CallingContext::Constructor;
+            // val will be a rust function
+            Ok((Rc::new(RefCell::new(Values::Ref(val.clone(), is_mut))), is_mut))
+        }
+    } else { Err(format!("Unable to find {} in class {}", name, c_name)) }
+}
+
+/// Gets the qualified type name of `name` with `ctx_val` as a lookup context
+fn get_name_w_type(ctx_val: &Values, name: &String) -> String {
+    let class_name = &super::std_sapl::type_of(ctx_val)[..];
     let class_name_no_details = if class_name.find(|c| { c == '_' }) != None {
         &class_name[0..class_name.find(|c| { c == '_' }).unwrap()]
     } else {
         class_name
     };
-    let class_func_name = format!("{}::{}", class_name_no_details, name);
-    if let Values::Ref(ptr, is_var) = &val {
-        lookup(&*ptr.borrow(), name, scope, val_mut && *is_var)
-    }
-    else if let Values::Object(ptr) = &val {
-        let Class {name: _, members, ..} = &**ptr;
-        if let Some(Member {val, is_var, is_pub: true}) = members.get(name) {
-            let is_mut = *is_var && val_mut;
-            Some((Rc::new(RefCell::new(Values::Ref(val.clone(), is_mut))), is_mut))
-        } else { None }
-    } 
-    else if let Some((ptr, is_var)) = super::name_lookup(&class_func_name, scope) {    
-        Some((ptr, is_var && val_mut))
-    } else if let Some((ptr, is_var)) = super::name_lookup(&name, scope) {
-        Some((ptr, is_var && val_mut))
-    } else {
-        None
-    }
+    format!("{}::{}", class_name_no_details, name)
 }
 
 /// Executes `func` if the lookup was successful
 /// `fn_name` - the name of the function looked up (for debugging purposes)
 /// Allows borrows the looked-up value immutably
-fn do_if_some<T, F>(maybe: Option<(Rc<RefCell<T>>, bool)>, func: F, fn_name: &String) -> Res 
+fn do_if_some<T, F>(maybe: Result<(Rc<RefCell<T>>, bool), String>, func: F, fn_name: &String) -> Res 
     where F : FnOnce(&T, bool) -> Res
 {
-    if let Some((t, is_var)) = maybe {
-        func(&t.borrow(), is_var)
-    } else {
-        ukn_name(fn_name)
+    match maybe {
+        Ok((t, is_var)) => func(&t.borrow(), is_var),
+        Err(msg) => str_exn(&format!("Error looking up bound name: '{}' in function {}", msg, fn_name)),
     }
 }
 
@@ -185,7 +203,7 @@ fn assign_to_dot(dot_left: &Ast, dot_right: &Ast, set_val: Values, scope: &mut i
     if let Ast::Name(name) = dot_right {
         match eval(dot_left, scope) {
             Vl(v) => {
-                if let Some((ptr, true)) = lookup(&v, &name, scope, true) {
+                if let Ok((ptr, true)) = lookup(&v, &name, scope, true) {
                     *ptr.borrow_mut() = set_val;
                     Vl(Values::Unit)
                 } else {
@@ -211,12 +229,7 @@ fn perform_update_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> R
         match super::name_lookup(&x, scope) {
             Some((ptr, _)) => {
                 if let Values::Ref(rf, mtble) = &*ptr.borrow() {
-                    if *mtble {
-                        *(rf.borrow_mut()) = rt;
-                        Vl(Values::Unit)
-                    } else {
-                        str_exn(IMMU_ERR)
-                    }
+                    update_ref(rf.clone(), *mtble, rt)
                 } else {
                     str_exn(NREF)
                 }
@@ -225,15 +238,26 @@ fn perform_update_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> R
         }
     } else {
         match eval(left, scope) {
-            Vl(Values::Ref(rf, true)) => { 
-                *(rf.borrow_mut()) = rt; 
-                Vl(Values::Unit) 
-            },
-            Vl(Values::Ref(_, false)) => 
-                str_exn(IMMU_ERR),
+            Vl(Values::Ref(rf, mtble)) => update_ref(rf, mtble, rt),
             _ => str_exn(NREF),
         }        
     }
+}
+
+/// Updates a reference by repeatedly applying <-
+fn update_ref(mut reference: Rc<RefCell<Values>>, is_mut: bool, val: Values) -> Res {
+    if !is_mut { return str_exn(IMMU_ERR); }
+    while let Values::Ref(ptr, true) = &*reference.clone().borrow() {
+        reference = ptr.clone();
+    }
+    match &mut *reference.borrow_mut() {
+        Values::Ref(_, false) => str_exn(IMMU_ERR),
+        ptr => {
+            *ptr = val;
+            Vl(Values::Unit)
+        },
+    } 
+
 }
 
 /// Performs the concatenation operator `left @ right`
@@ -519,8 +543,10 @@ fn perform_type_check(left: &Ast, is_type: &Ast, scope: &mut impl Environment) -
         match (super::eval(left, scope), &is_type[..]) {
             (Vl(x), typ) if super::std_sapl::type_of(&x).eq(typ) => Vl(Values::Bool(true)),
             (Vl(Values::Tuple(_)), "tuple") =>  Vl(Values::Bool(true)),
-            (Vl(Values::Unit), "None") =>  Vl(Values::Bool(true)),
-            (Vl(x), "Some") if x != Values::Unit =>  Vl(Values::Bool(true)),
+            (Vl(Values::Unit), "none") =>  Vl(Values::Bool(true)),
+            (Vl(x), "some") if x != Values::Unit =>  Vl(Values::Bool(true)),
+            (Vl(Values::Int(_)), "number") | (Vl(Values::Float(_)), "number") =>
+                Vl(Values::Bool(true)),
             (Vl(_), _) =>  Vl(Values::Bool(false)),
             (e, _) => e,
         }

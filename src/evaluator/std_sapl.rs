@@ -31,9 +31,9 @@ pub fn get_std_environment() -> Scope {
     add_func(&mut scope, "template", template_file, 2);
     add_func(&mut scope, "cin_line", eval_rdline, 0);
     add_func(&mut scope, "cout", eval_cout, 1);
-    add_func(&mut scope, "coutln", eval_cout_ln, 1);
+    add_func(&mut scope, "coutln", eval_cout_ln, 0);
     add_func(&mut scope, "print", eval_cout, 1);
-    add_func(&mut scope, "println", eval_cout_ln, 1);
+    add_func(&mut scope, "println", eval_cout_ln, 0);
     add_func(&mut scope, "string::contains", string_contains, 2);
     add_func(&mut scope, "string::split", str_split, 2);
     scope
@@ -55,8 +55,8 @@ pub fn type_of(v: &Values) -> String {
         Values::Placeholder => "partial app placeholder".to_owned(),
         Values::Ref(_, _) => "ref".to_owned(),//type_of(&ptr.borrow()),
         Values::RustFunc(..) => "function".to_owned(),
-        Values::Object(ptr) => {
-            let Class {name, ..} = &**ptr;
+        Values::Object(ptr, _) => {
+            let Class {name, ..} = &*ptr.borrow();
             name.clone()
         },
         Values::Type(ptr) => {
@@ -146,8 +146,8 @@ fn size_of(val: &Values) -> i32 {
         Values::Tuple(x) => x.len() as i32,
         Values::Unit => 0,
         Values::Ref(ptr, _) => size_of(&ptr.borrow()),
-        Values::Object(ptr) => {
-            let Class {name: _, members, ..} = &**ptr;
+        Values::Object(ptr, _) => {
+            let Class {name: _, members, ..} = &*ptr.borrow();
             members.len() as i32
         },
         Values::Type(ptr) => {

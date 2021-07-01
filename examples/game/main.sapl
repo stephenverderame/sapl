@@ -1,0 +1,10 @@
+import examples::game::map::*;
+
+let game_map = Map(10, 10);
+
+while true {
+    game_map.display();
+    coutln('\nPlease enter a command:');
+    let cmd = cin_line();
+    if cmd == 'quit': return None
+}
