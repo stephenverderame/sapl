@@ -613,7 +613,7 @@ mod tests {
         assert_val_eq("{'name': 'Billy', 'age': 53 }", Values::Map(Box::new(m)));
 
         assert_val_eq(r#"
-        let map = {
+        let mp = {
             'name': 'Jill',
             'aliases': ('J', 'Jillian'),
            'age': 20,
@@ -625,36 +625,36 @@ mod tests {
                 + " years old."
             }
         };
-        let speak = map['speak'];
-        speak(map['name'], map['aliases'], map['age'])
+        let speak = mp['speak'];
+        speak(mp['name'], mp['aliases'], mp['age'])
         "#, Values::Str("Hello, my name is Jill, but you can call me J or Jillian. I am 20 years old.".to_owned()));
 
         assert_val_eq(r#"
-        let map = {
+        let mp = {
             'str key': 20
         };
-        map['str key']
+        mp['str key']
         "#, Values::Int(20));
 
         assert_val_eq(r#"
-        let map = {};
-        let map = map @ ('name', 'Alex') @ ('age', 19);
-        map['name'] + " " + map['age']
+        let mp = {};
+        let mp = mp @ ('name', 'Alex') @ ('age', 19);
+        mp['name'] + " " + mp['age']
         "#, Values::Str("Alex 19".to_owned()));
 
         assert_val_eq(r#"
-        let map = {'address': '333 East Valley Road'};
-        let map = map @ [('name', 'Alex'), ('age', 19)];
-        if map.contains('address', 'name'):
-            map.contains('age', 'ssn')
+        let mp = {'address': '333 East Valley Road'};
+        let mp = mp @ [('name', 'Alex'), ('age', 19)];
+        if mp.contains('address', 'name'):
+            mp.contains('age', 'ssn')
         else:
-            map
+            mp
         "#, Values::Bool(false));
 
         assert_val_eq(r#"
-        let map = {'address': '333 East Valley Road'};
-        let map = map @ { 'house' + '_color': 'red', 'car': 'volvo' };
-        map['house_color']
+        let mp = {'address': '333 East Valley Road'};
+        let mp = mp @ { 'house' + '_color': 'red', 'car': 'volvo' };
+        mp['house_color']
         "#, Values::Str("red".to_owned()));
     }
 

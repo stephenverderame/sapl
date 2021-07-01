@@ -44,9 +44,11 @@ pub fn eval(ast: &Ast, scope: &mut impl Environment) -> Res {
         Ast::Bop(left, op, right) => eval_bop(&*left, op, &*right, scope),
         Ast::If(guard, body, other) => eval_if(&*guard, &*body, other, scope),
         Ast::Seq(children) => eval_seq(children, scope),
-        Ast::Let(name, ast) => eval_let(name, &*ast, scope, false),
-        Ast::Func(name, params, ast, post) => 
+        Ast::Let(name, ast) if are_valid_names(name, scope) => eval_let(name, &*ast, scope, false),
+        Ast::Func(name, params, ast, post) if is_valid_name(name, scope) => 
             eval_func(name, params, &*ast, post, scope, false),
+        Ast::Let(..) | Ast::Func(..) =>
+            str_exn("Cannot name a value a type name"),
         Ast::Lambda(params, ast) => eval_lambda(params, &*ast, scope),
         Ast::FnApply(left, args) => 
             eval_fn_app(&*left, args, scope),
@@ -62,6 +64,31 @@ pub fn eval(ast: &Ast, scope: &mut impl Environment) -> Res {
         Ast::Type(interface) => eval_type_def(interface, scope, false),
         Ast::Export(ast) => eval_export(&*ast, scope),
         Ast::Import(file, prefix) => eval_import(file, prefix, scope, false),
+    }
+}
+
+fn are_valid_names(names: &Vec<(String, bool)>, scope: &impl Environment) -> bool {
+    for (name, _) in names {
+        if !is_valid_name(name, scope) { return false; }
+    }
+    true
+}
+
+fn is_valid_name(name: &String, scope: &impl Environment) -> bool {
+    match &name[..] {
+        "int" | "float" | "string" |
+        "object" | "tuple" | "array" |
+        "map" | "none" | "some" | "range" |
+        "bool" | "number" | "ref" => false,
+        _ if name.starts_with("tuple_") && 
+            name[name.find('_').unwrap() + 1..name.len()].parse::<i32>().is_ok() => false,
+    _ => {
+            if let Some((ptr, _)) = scope.find(name) {
+                if let Values::Object(..) = &*ptr.borrow() { false }
+                else if let Values::Type(..) = &*ptr.borrow() { false }
+                else { true }
+            } else { true }
+        },
     }
 }
 
