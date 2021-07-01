@@ -1,5 +1,5 @@
 use std::fmt;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::cell::RefCell;
 use crate::parser::Ast;
 use std::collections::HashMap;
@@ -25,6 +25,7 @@ pub enum Values {
     Map(Box<HashMap<String, Values>>),
     Placeholder,
     Ref(Rc<RefCell<Values>>, bool),
+    WeakRef(Weak<RefCell<Values>>, bool), //Invariant: weak ref must always be valid
     RustFunc(Rc<dyn Fn(Vec<Values>) -> Res>, usize),
     Object(Rc<RefCell<Class>>, CallingContext),
     Type(Rc<Class>),
@@ -77,6 +78,7 @@ impl std::fmt::Debug for Values {
             Array(x) | Tuple(x) => write!(f, "{:?}", x),
             Map(x) => write!(f, "{:?}", x),
             Ref(x, _) => write!(f, "ref {:?}", &*x.borrow()),
+            WeakRef(x, _) => write!(f, "weak {:?}", &*x.upgrade().unwrap().borrow()),
             Placeholder => write!(f, "<placeholder>"),
             Unit => write!(f, "<unit>"),
             Range(a, b) => write!(f, "{:?}..{:?}", a, b), 
@@ -99,6 +101,7 @@ impl std::fmt::Display for Values {
             Array(x) | Tuple(x) => write!(f, "{:?}", &*x),
             Map(x) => write!(f, "{:?}", &*x),
             Ref(x, _) => write!(f, "ref {}", &*x.borrow()),
+            WeakRef(x, _) => write!(f, "weak {:?}", &*x.upgrade().unwrap().borrow()),
             Placeholder | Unit => Ok(()),
             Range(a, b) => write!(f, "{}..{}", &*a, &*b), 
             Object(a, _) => write!(f, "Object {{ {:?} }}", &*a.borrow()),

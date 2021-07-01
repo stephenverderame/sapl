@@ -32,6 +32,14 @@ pub fn evaluate(ast: &Ast) -> Res {
 
 /// Evaluates the ast to a value
 pub fn eval(ast: &Ast, scope: &mut impl Environment) -> Res {
+    match eval_keep_all(ast, scope) {
+        Vl(Values::WeakRef(ptr, _)) => 
+            Vl(ptr.upgrade().unwrap().borrow().clone()),
+        e => e,
+    }
+}
+
+fn eval_keep_all(ast: &Ast, scope: &mut impl Environment) -> Res {
     match ast {
         Ast::VFloat(x) => Vl(Values::Float(*x)),
         Ast::VInt(x) => Vl(Values::Int(*x)),
@@ -285,9 +293,7 @@ fn name_lookup(name: &str, scope: &impl Environment) -> Option<(Rc<RefCell<Value
         return Some(p); 
     } 
     if !name.contains("::") {
-        if let Some(p) = scope.find(&format!("self::{}", name)) {
-            return Some(p)
-        } else if let Some(p) = scope.find(&format!("export::{}", name)) {
+        if let Some(p) = scope.find(&format!("export::{}", name)) {
             return Some(p)
         } 
     }  

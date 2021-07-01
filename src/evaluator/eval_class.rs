@@ -94,6 +94,7 @@ fn get_object_members(object: &SaplStruct, scope: &mut impl Environment)
             if let Values::Type(ptr) = &*ptr.borrow() {
                 let Class {name:_, members, ..} = ptr.as_ref();
                 for (name, mem) in members {
+                    println!("Adding {:?}", mem);
                     mems.insert(name.clone(), mem.clone());
                 }
             } else { return Err(str_exn("Cannot subtype from non-type")); }

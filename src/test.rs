@@ -1119,23 +1119,23 @@ mod tests {
             pub def name, var age = 0
 
             fun Person name {
-                self.name <- name;
-                self.ssn <- 156
+                self.name = name;
+                self.ssn = 156
             }
 
             pub fun greet {
-                "Hello! My name is " + *self.name
-                + " and I am " + *self.age
+                "Hello! My name is " + self.name
+                + " and I am " + self.age
                 + " years old."
             }
 
             pub fun verify test_ssn {
-                *self.ssn == test_ssn
+                self.ssn == test_ssn
             }
         }
 
         let jane = Person('Jane');
-        [jane.greet(), jane.verify(156), 10 |> jane.verify, *jane.name]
+        [jane.greet(), jane.verify(156), 10 |> jane.verify, jane.name]
         "#, 
         "['Hello! My name is Jane and I am 0 years old.', true, false, 'Jane']");
 
@@ -1144,11 +1144,11 @@ mod tests {
             def var species
 
             fun Animal species {
-                self.species <- species
+                self.species = species
             }
 
             pub fun mutate species {
-                self.species <- species
+                self.species = species
             }
         }
 
@@ -1169,8 +1169,8 @@ mod tests {
 
         let m = Machine();
         try
-            m.id <- 10;
-            *m.id
+            m.id = 10;
+            m.id
         catch _:
             'pass'
         "#, "'pass'");
@@ -1182,8 +1182,8 @@ mod tests {
 
         let var m = Machine();
         try
-            m.id <- 10;
-            *m.id
+            m.id = 10;
+            m.id
         catch _:
             'pass'
         "#, "'pass'");
@@ -1194,8 +1194,8 @@ mod tests {
         }
 
         let var m = Machine();
-        m.id <- 10;
-        *m.id
+        m.id = 10;
+        m.id
         "#, "10");
 
         assert_sapl_eq(r#"
@@ -1205,8 +1205,8 @@ mod tests {
 
         let var m = Machine();
         try
-            m.id <- 10;
-            *m.id
+            m.id = 10;
+            m.id
         catch _:
             'pass'
         "#, "'pass'");
@@ -1218,8 +1218,8 @@ mod tests {
 
         let m = Machine();
         try
-            m.id <- 10;
-            *m.id
+            m.id = 10;
+            m.id
         catch _:
             'pass'
         "#, "'pass'");
@@ -1235,7 +1235,7 @@ mod tests {
 
         let adam = Person();
         try:
-            *adam.secret
+            adam.secret
         catch _:
             true
         &&
@@ -1253,7 +1253,7 @@ mod tests {
             pub def name, age
 
             pub fun speak {
-                "Hello. I am " + *self.name 
+                "Hello. I am " + self.name 
             }
         }
 
@@ -1261,8 +1261,8 @@ mod tests {
 
         struct Baby : Person {
             fun Baby name {
-                self.age <- 0;
-                self.name <- name
+                self.age = 0;
+                self.name = name
             }
 
             pub fun speak {
@@ -1272,14 +1272,14 @@ mod tests {
 
         struct Child : my_type {
             fun Child name {
-                self.age <- 10;
-                self.name <- name
+                self.age = 10;
+                self.name = name
             }
         }
 
         let little_jimmy = Baby('Jimmy');
         let bobby = Child('Bobby');
-        [little_jimmy.speak(), *little_jimmy.age, bobby.speak(), *bobby.age]
+        [little_jimmy.speak(), little_jimmy.age, bobby.speak(), bobby.age]
         "#, 
         "['Goo-goo-ga-ga', 0, 'Hello. I am Bobby', 10]");
 
@@ -1307,7 +1307,7 @@ mod tests {
 
             fun do_it {
                 fun call_it {
-                    self.a_num <- 10
+                    self.a_num = 10
                 }
 
                 call_it()
@@ -1318,7 +1318,7 @@ mod tests {
         Obj();
         Obj();
         let a = Obj();
-        (a.get_count(), *a.a_num)
+        (a.get_count(), a.a_num)
         "#, "(3, 10)")
     }
 
@@ -1414,7 +1414,7 @@ mod tests {
             pub def a_num
 
             fun Class x {
-                self.a_num <- self.setup(x + 20)               
+                self.a_num = self.setup(x + 20)               
             }
 
             fun setup y {
@@ -1431,7 +1431,7 @@ mod tests {
         }
 
         let c  = Class(20);
-        *c.a_num + c.do_it_again(20)
+        c.a_num + c.do_it_again(20)
         "#, "154");
     }
 

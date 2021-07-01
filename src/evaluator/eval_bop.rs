@@ -30,21 +30,28 @@ pub fn eval_bop(left: &Ast, op: &Op, right: &Ast, scope: &mut impl Environment) 
         &Op::Is => return perform_type_check(left, right, scope),
         _ => (),
     };
-    let left = eval(left, scope);
-    match (left, op) {
+    match (super::eval_keep_all(left, scope), op) {
         (x, Op::Lor) if to_booly(&x) == Ok(true) => Vl(Values::Bool(true)),
         (x, Op::Land) if to_booly(&x) == Ok(false) => Vl(Values::Bool(false)),
-        (Vl(val), op) => {
-            match (eval(right, scope), op) {
-                (Vl(right), op @ Op::Eq) | (Vl(right), op @ Op::Neq) =>
-                    perform_eq_test(val, op, right),
-                (Vl(right), Op::Index) => perform_index_op(&val, right),
-                (Vl(right), Op::Range) => Vl(Values::Range(Box::new(val), Box::new(right))),
-                (Vl(right), Op::Concat) => perform_concat(val, right),
-                (Vl(right), op) => perform_bop(val, op, right),
-                (e, _) => e,
-            }
+        (Vl(v), op) => eval_bop_vals(v, op, eval(right, scope), scope),
+        (e, _) => e,
+    }
+}
+
+fn eval_bop_vals(left: Values, op: &Op, right: Res, scope: &mut impl Environment) -> Res {
+    match (right, op) {
+        (Vl(right), Op::Index) => perform_index_op(&left, right),
+        (right, _) if matches!(left, Values::WeakRef(..)) => {
+            if let Values::WeakRef(ptr, _) = left {
+                eval_bop_vals(ptr.upgrade().unwrap().borrow().clone(), 
+                    op, right, scope)
+            } else { panic!("matches! failed") }
         },
+        (Vl(right), op @ Op::Eq) | (Vl(right), op @ Op::Neq) =>
+            perform_eq_test(left, op, right),
+        (Vl(right), Op::Range) => Vl(Values::Range(Box::new(left), Box::new(right))),
+        (Vl(right), Op::Concat) => perform_concat(left, right),
+        (Vl(right), op) => perform_bop(left, op, right),
         (e, _) => e,
     }
 }
@@ -56,7 +63,7 @@ fn perform_dot_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> Res 
     if let Ast::Name(x) = left {
         lookup_on_name(x, right, scope)
     } else {
-        match eval(left, scope) {
+        match super::eval_keep_all(left, scope) {
             Vl(v) => perform_dot_lookup(v, right, scope, true),
             e => return e,
         }
@@ -70,6 +77,8 @@ fn lookup_on_name(name: &String, right: &Ast, scope: &mut impl Environment) -> R
             match &*v.borrow() {
                 Values::Ref(ptr, mt) => 
                     return perform_dot_lookup(Values::Ref(ptr.clone(), *mt), right, scope, nm_mut),
+                Values::WeakRef(ptr, mt) =>
+                    return perform_dot_lookup(Values::Ref(ptr.upgrade().unwrap(), *mt), right, scope, nm_mut),
                 _ => (),
             };
             let rf = Values::Ref(v.clone(), nm_mut);
@@ -120,6 +129,9 @@ fn lookup(val: &Values, name: &String, scope: &mut impl Environment, val_mut: bo
     let class_func_name = get_name_w_type(val, name);
     if let Values::Ref(ptr, is_var) = &val {
         lookup(&*ptr.borrow(), name, scope, val_mut && *is_var)
+    } else if let Values::WeakRef(ptr, is_var) = &val {
+        lookup(&*ptr.upgrade().unwrap().borrow(),
+            name, scope, val_mut && *is_var)
     }
     else if let Values::Object(ptr, ctx) = &val {
         class_lookup(&ptr.borrow(), *ctx, name, val_mut)
@@ -144,8 +156,8 @@ fn class_lookup(class: &Class, ctx: CallingContext, name: &String, val_mut: bool
         }
         else {
             let is_mut = *is_var && val_mut || ctx == CallingContext::Constructor;
-            // val will be a rust function
-            Ok((Rc::new(RefCell::new(Values::Ref(val.clone(), is_mut))), is_mut))
+            println!("Found {} in class with mutability: {}", name, is_mut);
+            Ok((val.clone(), is_mut))
         }
     } else { Err(format!("Unable to find {} in class {}", name, c_name)) }
 }
@@ -183,8 +195,19 @@ fn perform_assign_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> R
         Vl(v) => v,
         e => return e,
     };
+    println!("Assign {:?} = {:?}", left, rt);
 
     if let Ast::Name(x) = left {
+        if let Some((ptr, _)) = super::name_lookup(&x, scope) {
+            if let Values::WeakRef(ptr, mu) = &*ptr.borrow() {
+                if *mu {
+                    *(ptr.upgrade().unwrap().borrow_mut()) = rt;
+                    return Vl(Values::Unit)
+                } else {
+                    return str_exn(IMMU_ERR)
+                }
+            }
+        } 
         match scope.update(&x[..], rt) {
             true => Vl(Values::Unit),
             false => str_exn(IMMU_ERR),
@@ -201,9 +224,10 @@ fn perform_assign_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> R
 /// the name in the left branch value and sets it if it is mutable
 fn assign_to_dot(dot_left: &Ast, dot_right: &Ast, set_val: Values, scope: &mut impl Environment) -> Res {
     if let Ast::Name(name) = dot_right {
-        match eval(dot_left, scope) {
+        let mu = is_dot_mut(dot_left, scope);
+        match super::eval_keep_all(dot_left, scope) {
             Vl(v) => {
-                if let Ok((ptr, true)) = lookup(&v, &name, scope, true) {
+                if let Ok((ptr, true)) = lookup(&v, &name, scope, mu) {
                     *ptr.borrow_mut() = set_val;
                     Vl(Values::Unit)
                 } else {
@@ -215,6 +239,21 @@ fn assign_to_dot(dot_left: &Ast, dot_right: &Ast, set_val: Values, scope: &mut i
     } else {
         str_exn(&format!("Expected a name following the dot operator. Got {:?}", dot_right))
     }
+}
+
+/// Determines if entire series of names that make up LHS are mutable
+fn is_dot_mut(left: &Ast, scope: &impl Environment) -> bool {
+    let mut ast = left;
+    while let Ast::Bop(left, _, _) = ast {
+        if let Ast::Name(x) = &**left {
+            if let Some((_, false)) = scope.find(x) { return false; }
+        }
+        ast = &**left;
+    }
+    if let Ast::Name(x) = ast {
+        if let Some((_, false)) = scope.find(x) { return false; }
+    }
+    true
 }
 
 /// Updates a reference `left <- right`
@@ -339,6 +378,7 @@ fn perform_index_op(left: &Values, right: Values) -> Res {
             }
         },
         (Values::Ref(rf, _), idx) => perform_index_op(&rf.borrow(), idx),
+        (Values::WeakRef(rf, _), idx) => perform_index_op(&rf.upgrade().unwrap().borrow(), idx),
         (Values::Str(string), v) => index_string(string, v),
         (x, idx) => inv_arg("index", Some(&format!(
             "Expected an indexable expression. Got: {:?}[{:?}]", x, idx

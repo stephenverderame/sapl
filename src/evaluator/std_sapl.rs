@@ -53,7 +53,7 @@ pub fn type_of(v: &Values) -> String {
         Values::Map(_) => "map".to_owned(),
         Values::Func(..) => "function".to_owned(),
         Values::Placeholder => "partial app placeholder".to_owned(),
-        Values::Ref(_, _) => "ref".to_owned(),//type_of(&ptr.borrow()),
+        Values::Ref(_, _) | Values::WeakRef(..) => "ref".to_owned(),//type_of(&ptr.borrow()),
         Values::RustFunc(..) => "function".to_owned(),
         Values::Object(ptr, _) => {
             let Class {name, ..} = &*ptr.borrow();

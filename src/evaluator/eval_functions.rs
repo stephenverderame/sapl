@@ -288,11 +288,12 @@ fn check_func_post(result: Values, postcondition: &Option<Ast>, scope: &impl Env
         None => Vl(result),
         Some(ast) => {
             let mut scope = ImmuScope::from(scope);
+            let result = Rc::new(RefCell::new(result));
             add_type_variables_to_scope(&result, &mut scope);
-            scope.add("result".to_owned(), result.clone(), false);
+            scope.add_direct("result".to_owned(), result.clone(), false);
             match eval(&ast, &mut scope) {
-                Vl(_) if matches!(&ast, &Ast::Name(_)) => Vl(result),
-                Vl(Values::Bool(true)) => Vl(result),
+                Vl(_) if matches!(&ast, &Ast::Name(_)) => Vl(result.borrow().clone()),
+                Vl(Values::Bool(true)) => Vl(result.borrow().clone()),
                 /*e @ Bad(_) => e,
                 e @ Res::Exn(_) => e, */
                 _ => str_exn(PCE_FAIL),
@@ -302,19 +303,19 @@ fn check_func_post(result: Values, postcondition: &Option<Ast>, scope: &impl Env
     }
 }
 
-fn add_type_variables_to_scope(val: &Values, scope: &mut impl Environment) {
-    scope.add(type_of(val), val.clone(), false);
-    if val == &Values::Unit {
+fn add_type_variables_to_scope(val: &Rc<RefCell<Values>>, scope: &mut impl Environment) {
+    scope.add_direct(type_of(&*val.borrow()), val.clone(), false);
+    if &*val.borrow() == &Values::Unit {
         scope.add("none".to_owned(), Values::Unit, false);
     } else {
-        scope.add("some".to_owned(), val.clone(), false);
-        match val {
+        scope.add_direct("some".to_owned(), val.clone(), false);
+        match &*val.borrow() {
             Values::Float(_) | Values::Int(_) =>
-                scope.add("number".to_owned(), val.clone(), false),
+                scope.add_direct("number".to_owned(), val.clone(), false),
             Values::Tuple(_) =>
-                scope.add("tuple".to_owned(), val.clone(), false),
+                scope.add_direct("tuple".to_owned(), val.clone(), false),
             Values::Object(..) | Values::Type(_) => 
-                scope.add("object".to_owned(), val.clone(), false),
+                scope.add_direct("object".to_owned(), val.clone(), false),
             _ => (),
         }
     }
