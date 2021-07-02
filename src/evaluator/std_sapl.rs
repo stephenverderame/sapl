@@ -53,7 +53,8 @@ pub fn type_of(v: &Values) -> String {
         Values::Map(_) => "map".to_owned(),
         Values::Func(..) => "function".to_owned(),
         Values::Placeholder => "partial app placeholder".to_owned(),
-        Values::Ref(_, _) | Values::WeakRef(..) => "ref".to_owned(),//type_of(&ptr.borrow()),
+        Values::Ref(_, _) => "ref".to_owned(),
+        Values::Slice(ptr, ..) => type_of(&*ptr.borrow()),
         Values::RustFunc(..) => "function".to_owned(),
         Values::Object(ptr, _) => {
             let Class {name, ..} = &*ptr.borrow();
@@ -437,12 +438,17 @@ fn string_contains(mut args: Vec<Values>) -> Res {
                     Some(&format!("First argument must be a string. Got {:?}", ptr)))
             }
         },
+        Values::Slice(s, _, rng) => {
+            if let Values::Str(s) = &*s.borrow() {
+                eval_str_contains(&s[std::cmp::min(rng.0, rng.1)..std::cmp::max(rng.0, rng.1)], args)
+            } else {panic!("First argument not string to contains")}
+        }
         fst => inv_arg("string::contains", 
             Some(&format!("First argument must be a string. Got {:?}", fst)))
     }
 }
 
-fn eval_str_contains(string: &String, args: Vec<Values>) -> Res {
+fn eval_str_contains(string: &str, args: Vec<Values>) -> Res {
     for a in args {
         let needle = format!("{}", a);
         if string.find(&needle).is_none() {

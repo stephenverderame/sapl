@@ -1,5 +1,5 @@
 use std::fmt;
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 use std::cell::RefCell;
 use crate::parser::Ast;
 use std::collections::HashMap;
@@ -25,7 +25,7 @@ pub enum Values {
     Map(Box<HashMap<String, Values>>),
     Placeholder,
     Ref(Rc<RefCell<Values>>, bool),
-    WeakRef(Weak<RefCell<Values>>, bool), //Invariant: weak ref must always be valid
+    Slice(Rc<RefCell<Values>>, bool, (usize, usize)),
     RustFunc(Rc<dyn Fn(Vec<Values>) -> Res>, usize),
     Object(Rc<RefCell<Class>>, CallingContext),
     Type(Rc<Class>),
@@ -78,7 +78,7 @@ impl std::fmt::Debug for Values {
             Array(x) | Tuple(x) => write!(f, "{:?}", x),
             Map(x) => write!(f, "{:?}", x),
             Ref(x, _) => write!(f, "ref {:?}", &*x.borrow()),
-            WeakRef(x, _) => write!(f, "weak {:?}", &*x.upgrade().unwrap().borrow()),
+            Slice(x, _, rng) => display_slice(x, rng, f),
             Placeholder => write!(f, "<placeholder>"),
             Unit => write!(f, "<unit>"),
             Range(a, b) => write!(f, "{:?}..{:?}", a, b), 
@@ -101,12 +101,40 @@ impl std::fmt::Display for Values {
             Array(x) | Tuple(x) => write!(f, "{:?}", &*x),
             Map(x) => write!(f, "{:?}", &*x),
             Ref(x, _) => write!(f, "ref {}", &*x.borrow()),
-            WeakRef(x, _) => write!(f, "weak {:?}", &*x.upgrade().unwrap().borrow()),
+            Slice(x, _, rng) => display_slice(x, rng, f),
             Placeholder | Unit => Ok(()),
             Range(a, b) => write!(f, "{}..{}", &*a, &*b), 
             Object(a, _) => write!(f, "Object {{ {:?} }}", &*a.borrow()),
             Type(a) => write!(f, "Type {{ {:?} }}", a),
         }
+    }
+}
+
+fn display_slice(ptr: &Rc<RefCell<Values>>, rng: &(usize, usize), fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(fmt, "{}", format_slice(ptr, rng))
+}
+
+pub fn format_slice(ptr: &Rc<RefCell<Values>>, rng: &(usize, usize)) -> String {
+    let rev = rng.0 > rng.1;
+    let rng = std::cmp::min(rng.0, rng.1) .. std::cmp::max(rng.0, rng.1);
+    match &*ptr.borrow() {
+        Values::Str(string) => {
+            let mut data = format!("{}", &string[rng.clone()]);
+            if rev {
+                data = String::from_utf8(data.as_bytes().to_vec()
+                    .into_iter().rev().collect::<Vec<u8>>()).unwrap();
+            }
+            format!("{}", data)
+        },
+        Values::Array(ptr) => {
+            let nw_vec = if rev {
+                ptr.clone().into_iter().rev().collect::<Vec<Values>>()
+            } else {
+                (**ptr).clone()
+            };
+            format!("{:?}", nw_vec)
+        },
+        x => panic!("{:?} cannot be sliced", x),
     }
 }
 
@@ -200,4 +228,26 @@ pub fn eval_args<F>(args: &Vec<Box<Ast>>, scope: &mut impl Environment, mut clos
         }
     }
     Vl(Values::Unit)
+}
+
+pub fn range_to_sapl_range(rng: (usize, usize)) -> Values {
+    if rng.0 == rng.1 {
+        Values::Int(rng.0 as i32)
+    } else {
+        Values::Range(Box::new(Values::Int(rng.0 as i32)),
+            Box::new(Values::Int(rng.1 as i32)))
+    }
+}
+
+/// Indexes `index` into a range `rng`
+pub fn sapl_range_from_rng(rng: Values) -> Option<(usize, usize)> {
+    match rng {
+        Values::Int(x) => Some((x as usize, x as usize)),
+        Values::Range(st, end) => {
+            if let (Values::Int(st), Values::Int(ed)) = (&*st, &*end) {
+                Some((*st as usize, *ed as usize))
+            } else { None }
+        },
+        _ => None,
+    }
 }

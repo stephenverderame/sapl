@@ -33,9 +33,24 @@ pub fn evaluate(ast: &Ast) -> Res {
 /// Evaluates the ast to a value
 pub fn eval(ast: &Ast, scope: &mut impl Environment) -> Res {
     match eval_keep_all(ast, scope) {
-        Vl(Values::WeakRef(ptr, _)) => 
-            Vl(ptr.upgrade().unwrap().borrow().clone()),
+        Vl(Values::Slice(data, _, rng)) =>
+            eval_slice(&*data.borrow(), &rng),
         e => e,
+    }
+}
+
+fn eval_slice(data: &Values, rng: &(usize, usize)) -> Res {
+    match data {
+        Values::Str(data) => eval_bop::index_string(data, range_to_sapl_range(*rng)),
+        Values::Array(data) => eval_bop::index_array(data, range_to_sapl_range(*rng)),
+        Values::Slice(data, _, rng2) => {
+            match eval_slice(&*data.borrow(), rng2) {
+                Vl(v) => eval_slice(&v, rng),
+                e => e,
+            }
+
+        },
+        e => str_exn(&format!("Cannot slice non string or array {:?}", e)),
     }
 }
 

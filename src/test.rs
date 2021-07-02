@@ -1408,6 +1408,29 @@ mod tests {
     }
 
     #[test]
+    fn slice_test() {
+        assert_sapl_eq(r#"
+        let var lst = [10, 20, 30];
+        lst[0] = 0;
+        let const_lst = [100, 200];
+        try:
+            const_lst[1] = 2
+        catch _:
+            lst[0]
+        "#, "0");
+
+        assert_sapl_eq(r#"
+        let var matrix = [
+            [10, 20, 30],
+            [50, 60, 70],
+            [1, 2, 3]
+        ];
+        matrix[1][1] = 100;
+        matrix[1]
+        "#, "[50, 100, 70]");
+    }
+
+    #[test]
     fn more_class_tests() {
         assert_sapl_eq(r#"
         struct Class {

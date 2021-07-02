@@ -33,20 +33,18 @@ pub fn eval_bop(left: &Ast, op: &Op, right: &Ast, scope: &mut impl Environment) 
     match (super::eval_keep_all(left, scope), op) {
         (x, Op::Lor) if to_booly(&x) == Ok(true) => Vl(Values::Bool(true)),
         (x, Op::Land) if to_booly(&x) == Ok(false) => Vl(Values::Bool(false)),
-        (Vl(v), op) => eval_bop_vals(v, op, eval(right, scope), scope),
+        (Vl(v @ Values::Slice(..)), Op::Index) => eval_bop_vals(v, op, eval(right, scope)),
+        (Vl(Values::Slice(data, _, rng)), op) => if let Vl(v) = super::eval_slice(&*data.borrow(), &rng) {
+            eval_bop_vals(v, op, eval(right, scope))
+        } else { str_exn("Cannot slice") },
+        (Vl(v), op) => eval_bop_vals(v, op, eval(right, scope)),
         (e, _) => e,
     }
 }
 
-fn eval_bop_vals(left: Values, op: &Op, right: Res, scope: &mut impl Environment) -> Res {
+fn eval_bop_vals(left: Values, op: &Op, right: Res) -> Res {
     match (right, op) {
         (Vl(right), Op::Index) => perform_index_op(&left, right),
-        (right, _) if matches!(left, Values::WeakRef(..)) => {
-            if let Values::WeakRef(ptr, _) = left {
-                eval_bop_vals(ptr.upgrade().unwrap().borrow().clone(), 
-                    op, right, scope)
-            } else { panic!("matches! failed") }
-        },
         (Vl(right), op @ Op::Eq) | (Vl(right), op @ Op::Neq) =>
             perform_eq_test(left, op, right),
         (Vl(right), Op::Range) => Vl(Values::Range(Box::new(left), Box::new(right))),
@@ -77,8 +75,8 @@ fn lookup_on_name(name: &String, right: &Ast, scope: &mut impl Environment) -> R
             match &*v.borrow() {
                 Values::Ref(ptr, mt) => 
                     return perform_dot_lookup(Values::Ref(ptr.clone(), *mt), right, scope, nm_mut),
-                Values::WeakRef(ptr, mt) =>
-                    return perform_dot_lookup(Values::Ref(ptr.upgrade().unwrap(), *mt), right, scope, nm_mut),
+                slice @ Values::Slice(..) =>
+                    return perform_dot_lookup(slice.clone(), right, scope, nm_mut),
                 _ => (),
             };
             let rf = Values::Ref(v.clone(), nm_mut);
@@ -129,8 +127,8 @@ fn lookup(val: &Values, name: &String, scope: &mut impl Environment, val_mut: bo
     let class_func_name = get_name_w_type(val, name);
     if let Values::Ref(ptr, is_var) = &val {
         lookup(&*ptr.borrow(), name, scope, val_mut && *is_var)
-    } else if let Values::WeakRef(ptr, is_var) = &val {
-        lookup(&*ptr.upgrade().unwrap().borrow(),
+    } else if let Values::Slice(ptr, is_var, _) = &val {
+        lookup(&*ptr.borrow(),
             name, scope, val_mut && *is_var)
     }
     else if let Values::Object(ptr, ctx) = &val {
@@ -156,7 +154,6 @@ fn class_lookup(class: &Class, ctx: CallingContext, name: &String, val_mut: bool
         }
         else {
             let is_mut = *is_var && val_mut || ctx == CallingContext::Constructor;
-            println!("Found {} in class with mutability: {}", name, is_mut);
             Ok((val.clone(), is_mut))
         }
     } else { Err(format!("Unable to find {} in class {}", name, c_name)) }
@@ -195,14 +192,12 @@ fn perform_assign_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> R
         Vl(v) => v,
         e => return e,
     };
-    println!("Assign {:?} = {:?}", left, rt);
 
     if let Ast::Name(x) = left {
-        if let Some((ptr, _)) = super::name_lookup(&x, scope) {
-            if let Values::WeakRef(ptr, mu) = &*ptr.borrow() {
-                if *mu {
-                    *(ptr.upgrade().unwrap().borrow_mut()) = rt;
-                    return Vl(Values::Unit)
+        if let Some((ptr, var)) = super::name_lookup(&x, scope) {
+            if let Values::Slice(ptr, mu, rng) = &*ptr.borrow() {
+                if *mu && var {
+                    return assign_slice(&mut *ptr.borrow_mut(), rng.clone(), rt)
                 } else {
                     return str_exn(IMMU_ERR)
                 }
@@ -215,9 +210,77 @@ fn perform_assign_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> R
     } else if let Ast::Bop(dot_left, Op::Dot, dot_right) = left {
         assign_to_dot(dot_left, dot_right, rt, scope)
     } else {
-        str_exn("Unimplemented assignment")
+        match super::eval_keep_all(left, scope) {
+            Vl(Values::Slice(data, true, rng)) => assign_slice(&mut *data.borrow_mut(), rng, rt),
+            Vl(Values::Slice(..)) => str_exn(IMMU_ERR),
+            _ => str_exn("Unimplemented assignment"),
+        }
     }
 }
+
+fn assign_slice(val: &mut Values, rng: (usize, usize), rt: Values) -> Res {
+    match (val, rt) {
+        (Values::Array(array), Values::Array(arr)) => {
+            let mut count = 0;
+            if let Some(r) = 
+            iter_over(rng.0 as i32, rng.1 as i32, &mut |idx: i32| -> Option<Res> {
+                if count < arr.len() {
+                    array[idx as usize] = arr[count].clone();
+                    count = count + 1;
+                } else {
+                    array.remove(idx as usize);
+                }
+                None
+            }) { return r }
+        },
+        (Values::Array(array), v) => {
+            if rng.0 != rng.1 {
+                if let Some(e) = 
+                iter_over(rng.0 as i32, rng.1 as i32, &mut |idx: i32| -> Option<Res> {
+                    array.remove(idx as usize);
+                    None
+                }) { return e }
+                array.insert(rng.0, v);
+            } else if rng.1 < array.len() && rng.0 < array.len() {
+                array[rng.0] = v;
+            }
+        },
+        (Values::Str(string), v) if rng.0 < string.len() && rng.1 < string.len() => {
+            *string = format!("{}{:?}{}", &string[0..std::cmp::min(rng.0, rng.1)], 
+                v, &string[std::cmp::max(rng.0, rng.1)..string.len()]);
+        },
+/*        (Values::Slice(ptr, true, in_rng), v) => {
+            
+        },*/
+        _ => return str_exn("Invalid assignment to slice"),
+    };
+    Vl(Values::Unit)
+}
+/*
+enum SliceRes<'a> {
+    Single(&'a mut Values),
+    Multi(&'a mut [Values]),
+}
+
+fn index_slice<'a>(slice: &'a Rc<RefCell<Values>>, rng: (usize, usize), need_mut: bool) -> Result<SliceRes<'a>, Res> {
+    match data {
+        Values::Slice(in_ptr, mu, in_rng) => {
+            if *mu || !need_mut {
+                index_slice(&in_ptr.clone(), *in_rng, need_mut)
+            } else { Err(str_exn("Cannot mutably slice immutable")) }
+        },
+        Values::Array(array) => {
+            if rng.0 == rng.1 && rng.0 < array.len() {
+                Ok(SliceRes::Single::<'a>(&mut array[rng.0]))
+            } else if rng.0 < array.len() && rng.1 < array.len() {
+                Ok(SliceRes::Multi::<'a>(&mut array[std::cmp::min(rng.0, rng.1)..std::cmp::max(rng.0, rng.1)]))
+            } else { Err(str_exn("Cannot mutably slice immutable")) }
+        },
+        Values::Str(..) => Err(str_exn("Cannot nest slice a string")),
+        e => Err(str_exn(&format!("Cannot reference index {:?}", e))),
+
+    }
+}*/
 
 /// Performs an assignment where the LHS is an application of the dot operator
 /// Evaluates the left branch of the dot op and if the right branch is a name, lookups 
@@ -359,11 +422,32 @@ fn map_concat_array(mut map: HashMap<String, Values>,
 fn perform_name_index_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> Res {
     if let Ast::Name(name) = left {
         match (super::name_lookup(name, scope), eval(right, &mut ImmuScope::from(scope))) {
-            (Some((val, _)), Vl(rt)) => perform_index_op(&val.borrow(), rt),
+            (Some((val, _)), Vl(rt)) if matches!(&*val.borrow(), Values::Map(..)) =>
+                perform_index_op(&*val.borrow(), rt),
+            (Some((val, is_mut)), Vl(rt)) => perform_ref_index_op(&val, is_mut, rt),
             (None, _) => ukn_name(name),
             (_, e) => e,
         }
     } else { panic!("Precondition broken perform_name_index_op") }
+}
+
+fn perform_ref_index_op(left: &Rc<RefCell<Values>>, is_mut: bool, idx: Values) -> Res {
+    let rng_idx = match &idx {
+        Values::Int(x) => (*x as usize, *x as usize),
+        Values::Range(st, end) => {
+            if let (Values::Int(st), Values::Int(ed)) = (&**st, &**end) {
+                (*st as usize, *ed as usize)
+            } else { return str_exn("Invalid slice type") }
+        },
+        _ => return str_exn("Invalid slice")
+    };
+    match &*left.borrow() {
+        Values::Array(_) => Vl(Values::Slice(left.clone(), is_mut, rng_idx)),
+        Values::Str(_) => Vl(Values::Slice(left.clone(), is_mut, rng_idx)),
+        Values::Ref(ptr, var) => perform_ref_index_op(ptr, is_mut && *var, idx),
+        Values::Slice(_, var, _) => Vl(Values::Slice(left.clone(), is_mut && *var, rng_idx)),
+        x => str_exn(&format!("Cannot index {:?}", x))
+    }
 }
 
 /// Indexes `left`[`right`]
@@ -377,8 +461,11 @@ fn perform_index_op(left: &Values, right: Values) -> Res {
                 _ => ukn_name(&name),
             }
         },
-        (Values::Ref(rf, _), idx) => perform_index_op(&rf.borrow(), idx),
-        (Values::WeakRef(rf, _), idx) => perform_index_op(&rf.upgrade().unwrap().borrow(), idx),
+        (Values::Ref(rf, is_mut), idx) => perform_ref_index_op(rf, *is_mut, idx),
+        (slice @ Values::Slice(_, _, _), idx) => 
+            if let Some(rng) = super::vals::sapl_range_from_rng(idx) {
+                Vl(Values::Slice(Rc::new(RefCell::new(slice.clone())), true, rng))
+            } else { str_exn("Invalid slice range") },
         (Values::Str(string), v) => index_string(string, v),
         (x, idx) => inv_arg("index", Some(&format!(
             "Expected an indexable expression. Got: {:?}[{:?}]", x, idx
@@ -386,7 +473,7 @@ fn perform_index_op(left: &Values, right: Values) -> Res {
     }
 }
 
-fn index_array(array: &Vec<Values>, indexer: Values) -> Res {
+pub fn index_array(array: &Vec<Values>, indexer: Values) -> Res {
     match indexer {
         Values::Int(idx) => {
             if idx < array.len() as i32 && idx >= 0 {
@@ -402,7 +489,7 @@ fn index_array(array: &Vec<Values>, indexer: Values) -> Res {
     }
 }
 
-fn index_string(string: &String, indexer: Values) -> Res {
+pub fn index_string(string: &String, indexer: Values) -> Res {
     match indexer {
         Values::Int(idx) => {
             let bytes = string.as_bytes().to_vec();
