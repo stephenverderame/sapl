@@ -1430,9 +1430,109 @@ mod tests {
             }
         }
 
-        let c  = Class(20);
+        let c = Class(20);
         c.a_num + c.do_it_again(20)
         "#, "154");
+
+        assert_sapl_eq(r#"
+        struct Test {
+            pub def list = []
+
+            fun Test x {
+                if x is array:
+                    for e in x:
+                        self.list.push_back(e)
+                else:
+                    self.list.push_back(x)
+            }
+        }
+
+        let t = Test(10);
+        t.list.contains(10)
+        "#, "true");
+
+        assert_sapl_eq(r#"
+        struct Test {
+            pub def var val
+        }
+
+        let var t = Test();
+        t.val = 20;
+        t.val
+        "#, "20");
+
+        assert_sapl_eq(r#"
+        struct Ring {
+            def var ring = [], max_size, var idx = 0
+
+            pub fun Ring size {
+                self.max_size = size
+            }
+
+            pub fun __len__ {
+                self.ring.len()
+            }
+
+            pub fun __index__ i {
+                (self.ring)[i % len(self)]
+            }
+
+            pub fun push_back x {
+                if self.ring.len() > self.idx:
+                    self.ring.set(self.idx, x)
+                else:
+                    self.ring.push_back(x)
+                self.idx = self.idx + 1;
+                if self.idx >= self.max_size:
+                    self.idx = 0
+
+            }
+
+            pub fun __call__ {
+                self.ring
+            }
+
+        }
+
+        let var ring = Ring(4);
+        ring.push_back(10);
+        ring.push_back(9);
+        ring.push_back(8);
+        ring.push_back(7);
+        ring.push_back(6);
+        (ring[0], ring(), ring.len())
+        "#, "(6, [6, 9, 8, 7], 4)");
+
+        assert_sapl_eq(r#"
+        struct Rope {
+            def l1, l2, var idx = 0
+
+            fun Rope l1 l2 {
+                self.l1 = l1;
+                self.l2 = l2
+            }
+
+            fun __next__ {
+                let res = 
+                if self.idx < self.l1.len() + self.l2.len():
+                    if self.idx >= self.l1.len():
+                        (self.l2)[self.idx - self.l1.len()]
+                    else:
+                        (self.l1)[self.idx]
+                else:
+                    None;
+                self.idx = self.idx + 1;
+                res
+            }
+
+        }
+        let r = Rope([5, 4], [3, 2, 1]);
+        let var buf = [];
+        for i in r {
+            buf.push_back(i)
+        }
+        buf
+        "#, "[5, 4, 3, 2, 1]");
     }
 
     #[test]

@@ -64,7 +64,7 @@ fn perform_dot_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> Res 
         lookup_on_name(x, right, scope)
     } else {
         match super::eval_keep_all(left, scope) {
-            Vl(v) => perform_dot_lookup(v, right, scope, true),
+            Vl(v) => perform_dot_lookup(v, right, scope, true), //here
             e => return e,
         }
     }
@@ -77,8 +77,8 @@ fn lookup_on_name(name: &String, right: &Ast, scope: &mut impl Environment) -> R
             match &*v.borrow() {
                 Values::Ref(ptr, mt) => 
                     return perform_dot_lookup(Values::Ref(ptr.clone(), *mt), right, scope, nm_mut),
-                Values::WeakRef(ptr, mt) =>
-                    return perform_dot_lookup(Values::Ref(ptr.upgrade().unwrap(), *mt), right, scope, nm_mut),
+                Values::WeakRef(data, mu) =>
+                    return perform_dot_lookup(Values::Ref(data.upgrade().unwrap(), *mu), right, scope, nm_mut),
                 _ => (),
             };
             let rf = Values::Ref(v.clone(), nm_mut);
@@ -99,13 +99,13 @@ fn perform_dot_lookup(val: Values, right: &Ast, scope: &mut impl Environment, va
                         params.push(val);
                         None
                     });
-                    apply_function(func, params, false, false)
+                    apply_function(&*func.borrow(), params, false, false)
                 }, name)
             } else { panic!("Unknown fn apply in dot op {:?}", name) }
         },
         Ast::Name(name) => {
             do_if_some(lookup(&val, name, scope, val_mut), |v, is_var| -> Res {
-                match v {
+                match &*v.borrow() {
                     f @ Values::Func(..) | f @ Values::RustFunc(..) => 
                         apply_function(f, vec![val], true, true),
                     Values::Ref(ptr, _) if matches!(&*ptr.borrow(), Values::Func(..)) 
@@ -114,7 +114,7 @@ fn perform_dot_lookup(val: Values, right: &Ast, scope: &mut impl Environment, va
                     },
                     Values::Ref(data, mut_ref) =>
                         Vl(Values::Ref(data.clone(), is_var && *mut_ref)),
-                    v => Vl(v.clone()), //clone creates new member vars here
+                    _ => Vl(Values::WeakRef(Rc::downgrade(&v), is_var)), 
                 }
             }, name)
         },
@@ -128,15 +128,18 @@ fn lookup(val: &Values, name: &String, scope: &mut impl Environment, val_mut: bo
 {
     let class_func_name = get_name_w_type(val, name);
     if let Values::Ref(ptr, is_var) = &val {
-        lookup(&*ptr.borrow(), name, scope, val_mut && *is_var)
+        return lookup(&*ptr.borrow(), name, scope, val_mut && *is_var)
     } else if let Values::WeakRef(ptr, is_var) = &val {
-        lookup(&*ptr.upgrade().unwrap().borrow(),
+        println!("Lookup {} on weak ref", name);
+        return lookup(&*ptr.upgrade().unwrap().borrow(),
             name, scope, val_mut && *is_var)
     }
-    else if let Values::Object(ptr, ctx) = &val {
-        class_lookup(&ptr.borrow(), *ctx, name, val_mut)
+    if let Values::Object(ptr, ctx) = &val {
+        if let Ok(v) = class_lookup(&ptr.borrow(), *ctx, name, val_mut) {
+            return Ok(v);
+        }
     } 
-    else if let Some((ptr, is_var)) = super::name_lookup(&class_func_name, scope) {    
+    if let Some((ptr, is_var)) = super::name_lookup(&class_func_name, scope) {    
         Ok((ptr, is_var && val_mut))
     } else if let Some((ptr, is_var)) = super::name_lookup(&name, scope) {
         Ok((ptr, is_var && val_mut))
@@ -156,7 +159,6 @@ fn class_lookup(class: &Class, ctx: CallingContext, name: &String, val_mut: bool
         }
         else {
             let is_mut = *is_var && val_mut || ctx == CallingContext::Constructor;
-            println!("Found {} in class with mutability: {}", name, is_mut);
             Ok((val.clone(), is_mut))
         }
     } else { Err(format!("Unable to find {} in class {}", name, c_name)) }
@@ -177,10 +179,10 @@ fn get_name_w_type(ctx_val: &Values, name: &String) -> String {
 /// `fn_name` - the name of the function looked up (for debugging purposes)
 /// Allows borrows the looked-up value immutably
 fn do_if_some<T, F>(maybe: Result<(Rc<RefCell<T>>, bool), String>, func: F, fn_name: &String) -> Res 
-    where F : FnOnce(&T, bool) -> Res
+    where F : FnOnce(Rc<RefCell<T>>, bool) -> Res
 {
     match maybe {
-        Ok((t, is_var)) => func(&t.borrow(), is_var),
+        Ok((t, is_var)) => func(t, is_var),
         Err(msg) => str_exn(&format!("Error looking up bound name: '{}' in function {}", msg, fn_name)),
     }
 }
@@ -195,19 +197,8 @@ fn perform_assign_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> R
         Vl(v) => v,
         e => return e,
     };
-    println!("Assign {:?} = {:?}", left, rt);
 
-    if let Ast::Name(x) = left {
-        if let Some((ptr, _)) = super::name_lookup(&x, scope) {
-            if let Values::WeakRef(ptr, mu) = &*ptr.borrow() {
-                if *mu {
-                    *(ptr.upgrade().unwrap().borrow_mut()) = rt;
-                    return Vl(Values::Unit)
-                } else {
-                    return str_exn(IMMU_ERR)
-                }
-            }
-        } 
+    if let Ast::Name(x) = left { 
         match scope.update(&x[..], rt) {
             true => Vl(Values::Unit),
             false => str_exn(IMMU_ERR),
@@ -359,7 +350,7 @@ fn map_concat_array(mut map: HashMap<String, Values>,
 fn perform_name_index_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> Res {
     if let Ast::Name(name) = left {
         match (super::name_lookup(name, scope), eval(right, &mut ImmuScope::from(scope))) {
-            (Some((val, _)), Vl(rt)) => perform_index_op(&val.borrow(), rt),
+            (Some((val, _)), Vl(rt)) => perform_index_op(&*val.borrow(), rt),
             (None, _) => ukn_name(name),
             (_, e) => e,
         }
@@ -377,9 +368,11 @@ fn perform_index_op(left: &Values, right: Values) -> Res {
                 _ => ukn_name(&name),
             }
         },
-        (Values::Ref(rf, _), idx) => perform_index_op(&rf.borrow(), idx),
-        (Values::WeakRef(rf, _), idx) => perform_index_op(&rf.upgrade().unwrap().borrow(), idx),
+        (Values::Ref(rf, _), idx) => perform_index_op(&*rf.borrow(), idx),
+        (Values::WeakRef(rf, _), idx) => 
+            perform_index_op(&*rf.upgrade().unwrap().borrow(), idx),
         (Values::Str(string), v) => index_string(string, v),
+        (obj @ Values::Object(..), idx) => index_obj(obj, idx),
         (x, idx) => inv_arg("index", Some(&format!(
             "Expected an indexable expression. Got: {:?}[{:?}]", x, idx
         ))),
@@ -400,6 +393,19 @@ fn index_array(array: &Vec<Values>, indexer: Values) -> Res {
         }),
         x => inv_arg("Array index.", Some(&format!("{:?}", x)))
     }
+}
+
+fn index_obj(val: &Values, index: Values) -> Res {
+    if let Values::Object(class, cc) = val {
+        if let Some(Member{val, ..}) = class.borrow().members.get("__index__") {
+            println!("Got index member");
+            if let func @ Values::RustFunc(..) = &*val.borrow() {
+                return super::eval_functions::apply_function(
+                    &func, vec![Values::Object(class.clone(), *cc), index], false, false)
+            }
+        }
+    }
+    str_exn(&format!("Object {:?} has no function __index__ ", val))
 }
 
 fn index_string(string: &String, indexer: Values) -> Res {

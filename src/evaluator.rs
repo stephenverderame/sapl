@@ -46,7 +46,7 @@ fn eval_keep_all(ast: &Ast, scope: &mut impl Environment) -> Res {
         Ast::VStr(x) => Vl(Values::Str(x.clone())),
         Ast::VBool(x) => Vl(Values::Bool(*x)),
         Ast::Name(x) => match name_lookup(&x, scope) {
-            Some((val, _)) => Vl(val.borrow().clone()),
+            Some((val, mu)) => Vl(Values::WeakRef(Rc::downgrade(&val), mu)),
             _ => ukn_name(x),
         },
         Ast::Bop(left, op, right) => eval_bop(&*left, op, &*right, scope),

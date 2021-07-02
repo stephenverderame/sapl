@@ -7,7 +7,73 @@ use super::exn::*;
 use crate::parser::Ast;
 use super::environment::*;
 use super::vals::to_booly;
-use std::collections::HashMap;
+use super::eval_class::*;
+
+struct SaplIter<'a> {
+    pub it: &'a Values,
+    counter: usize,
+    keys: Option<std::collections::hash_map::Iter<'a, String, Values>>,
+}
+
+impl<'a> std::iter::Iterator for SaplIter<'a> {
+    type Item = Values;
+
+    fn next(&mut self) -> Option<Values> {
+        let next =
+        match self.it {
+            Values::Str(s) if self.counter < s.len() =>
+                Some(Values::Str(String::from_utf8(vec![s.as_bytes()[self.counter].clone()]).unwrap())),
+            Values::Array(arr) if self.counter < arr.len() =>
+                Some(arr[self.counter].clone()),
+            Values::Object(class, cc) => {
+                let Class {members, ..} = &*class.borrow();
+                if let Some(Member {val, ..}) = members.get("__next__") {
+                    if let func @ Values::RustFunc(..) = &*val.borrow() {
+                        match super::eval_functions::apply_function(func, vec![Values::Object(class.clone(), *cc)], false, false) {
+                            Vl(v) if v == Values::Unit => None,
+                            Vl(v) => Some(v),
+                            e => panic!("Object iterator returned {:?}", e),
+                        }
+                    } else { None }
+                } else { panic!("Object is not iterable") }
+            },
+            Values::Range(st, en) => {
+                if let (Values::Int(s), Values::Int(e)) = (&**st, &**en) {
+                    let v = self.counter as i32;
+                    let s = *s;
+                    let e = *e;
+                    if v < (e - s).abs() {
+                        if s > e { Some(Values::Int(s - 1 - v)) } // larger num is exclusive
+                        else { Some(Values::Int(s + v)) }
+                    } else { None }
+                } else { panic!("Cannot iterate invalid range") }
+            },
+            Values::Map(map) => {
+                if self.keys.is_none() {
+                    self.keys = Some(map.iter());
+                }
+                let iter = self.keys.as_mut().unwrap();
+                if let Some((k, v)) = iter.next() {
+                    Some(Values::Tuple(Box::new(vec![Values::Str(k.clone()), v.clone()])))
+                } else { None }
+            },
+            Values::Str(..) | Values::Array(..) => None,
+            x => panic!("Cannot iterate {:?}", x),
+        };
+        self.counter += 1;
+        next
+    }
+}
+
+impl<'a> SaplIter<'a> {
+    fn new(val: &'a Values) -> SaplIter<'a> {
+        SaplIter {
+            it: val,
+            counter: 0,
+            keys: None,
+        }
+    }
+}
 
 /// Evaluates a try block
 pub fn eval_try(body: &Ast, catch_var: &str, catch_body: &Ast, scope: &mut impl Environment) -> Res {
@@ -34,15 +100,55 @@ pub fn eval_for(names: &Vec<String>, iter: &Ast, if_expr: &Option<Box<Ast>>,
         Some(&**ast)
     } else { None };
     match eval(iter, scope) {
-        Vl(Values::Range(start, end)) if names.len() == 1 => 
-            eval_for_range(*start, *end, &names[0], ife, body, scope),
-        Vl(Values::Array(vals)) =>
-            eval_for_array(*vals, names, ife, body, scope),
-        Vl(Values::Map(map)) => 
-            eval_for_map(*map, names, ife, body, scope),
+        Vl(iter @ Values::Map(..)) | Vl(iter @ Values::Range(..))
+        | Vl(iter @ Values::Array(..)) | Vl(iter @ Values::Str(..))
+        | Vl(iter @ Values::Object(..)) => {
+            let iter = get_iter_obj(iter);
+            eval_for_iter(SaplIter::new(&iter), names, ife, body, scope)
+        },
         _ => str_exn(&format!("{} in for loop", NON_ITER)),
 
     }
+   
+}
+
+fn get_iter_obj(v: Values) -> Values {
+    if let Values::Object(class, cc) = v {
+        let Class {members, ..} = &*class.borrow();
+        if let Some(Member {val, ..}) = members.get("__iter__") {
+            if let func @ Values::RustFunc(..) = &*val.borrow() {
+                match super::eval_functions::apply_function(func, vec![Values::Object(class.clone(), cc)], false, false) {
+                    Vl(v) => v,
+                    x => panic!("Could not execute iter(): {:?}", x),
+                }
+            } else { Values::Object(class.clone(), cc) }
+        } else { Values::Object(class.clone(), cc) }
+    } else { v }
+} 
+
+fn eval_for_iter(iter: SaplIter, names: &Vec<String>, 
+    ife: Option<&Ast>, body: &Ast, scope: &mut impl Environment) -> Res 
+{
+    for val in iter {
+        let mut child_scope = ScopeProxy::new(scope);
+        match (names.len(), val) {
+            (x, Values::Tuple(tup)) if x == tup.len() => {
+                for (name, v) in names.iter().zip(tup.into_iter()) {
+                    child_scope.add(name.to_string(), v, false);
+                }
+            },
+            (1, v) => child_scope.add(names[0].to_string(), v, false),
+            _ => return str_exn(&format!("{} in for loop. Expected iteration over an array of tuples or one name", INV_DEF)),
+        };
+
+        if !filter_out_for_loop_iter(ife, &mut child_scope) {
+            match eval(body, &mut child_scope) {
+                Vl(_) => (),
+                e => return e,
+            }
+        }
+    }
+    Vl(Values::Unit)
 }
 
 /// Evaluates a while loop
@@ -94,31 +200,6 @@ pub fn eval_seq(children: &Vec<Box<Ast>>, scope: &mut impl Environment)
     last_res
 }
 
-/// Evaluates a for loop over a range
-fn eval_for_range(start: Values, end: Values, name: &String, ife: Option<&Ast>,
-    body: &Ast, scope: &mut impl Environment) -> Res 
-{
-    if let (Values::Int(start), Values::Int(end)) = (start, end) {
-        match super::iter_over(start, end, &mut |idx: i32| -> Option<Res> {
-            let mut child = ScopeProxy::new(scope);
-            child.add(name.to_owned(), Values::Int(idx), false);
-
-            if !filter_out_for_loop_iter(ife, &mut child) {
-                match eval(body, &mut child) {
-                    Vl(_) => (),
-                    e => return Some(e),
-                }
-            }
-            None
-        }) {
-            Some(e) => e,
-            None => Vl(Values::Unit),
-        }
-    } else {
-        str_exn(&format!("{} in for loop. Range is non integral", NON_ITER))
-    }
-}
-
 /// Determines if the for loop iteration will be skipped
 /// Does not skip if `expr` is None or evaluating `expr` results in a value that
 /// is true-ish (true when applied to `to_booly`)
@@ -129,59 +210,4 @@ fn filter_out_for_loop_iter(expr: Option<&Ast>, scope: &mut impl Environment) ->
             _ => true,
         }
     } else { false }
-}
-
-fn eval_for_array(arr: Vec<Values>, names: &Vec<String>, 
-    ife: Option<&Ast>, body: &Ast, scope: &mut impl Environment) -> Res 
-{
-    for val in arr.into_iter() {
-        let mut child_scope = ScopeProxy::new(scope);
-        match (names.len(), val) {
-            (x, Values::Tuple(tup)) if x == tup.len() => {
-                for (name, v) in names.iter().zip(tup.into_iter()) {
-                    child_scope.add(name.to_string(), v, false);
-                }
-            },
-            (1, v) => child_scope.add(names[0].to_string(), v, false),
-            _ => return str_exn(&format!("{} in for loop. Expected iteration over an array of tuples or one name", INV_DEF)),
-        };
-
-        if !filter_out_for_loop_iter(ife, &mut child_scope) {
-            match eval(body, &mut child_scope) {
-                Vl(_) => (),
-                e => return e,
-            }
-        }
-    }
-    Vl(Values::Unit)
-}
-
-/// Evaluates a for loop over a map
-fn eval_for_map(map: HashMap<String, Values>, names: &Vec<String>, 
-    ife: Option<&Ast>, body: &Ast, scope: &mut impl Environment) -> Res 
-{
-    for (key, val) in map.into_iter() {
-        let mut child_scope = ScopeProxy::new(scope);
-        match names.len() {
-            2 => {
-                child_scope.add(names[0].to_string(), 
-                    Values::Str(key), false);
-                child_scope.add(names[1].to_string(), 
-                    val, false);
-            },
-            1 => child_scope.add(names[0].to_string(), 
-                Values::Tuple(
-                    Box::new(vec![Values::Str(key), val])), 
-                false),
-            _ => return str_exn(&format!("{} in for loop. Iteration over a map requires 1 or 2 names", INV_DEF)),
-        };
-
-        if !filter_out_for_loop_iter(ife, &mut child_scope) {
-            match eval(body, &mut child_scope) {
-                Vl(_) => (),
-                e => return e,
-            }
-        }
-    }
-    Vl(Values::Unit)
 }

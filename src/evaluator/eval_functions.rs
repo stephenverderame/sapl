@@ -179,7 +179,7 @@ pub fn eval_fn_app(func: &Ast, args: &Vec<Box<Ast>>, scope: &mut impl Environmen
 /// If `force_partial` is true, then the result is always a partial application
 /// the amount of parameters, the remaining parameters will be placeholders and a partial application
 /// will be performed
-pub fn apply_function(func: &Values, args: Vec<Values>, allow_incomplete: bool, force_partial: bool) 
+pub fn apply_function(func: &Values, mut args: Vec<Values>, allow_incomplete: bool, force_partial: bool) 
     -> Res 
 {
     match func {
@@ -189,6 +189,18 @@ pub fn apply_function(func: &Values, args: Vec<Values>, allow_incomplete: bool, 
             apply_rust_function(func.clone(), *min_args, args, allow_incomplete, force_partial),
         Values::Ref(func, _) =>
             apply_function(&func.borrow(), args, allow_incomplete, force_partial),
+        Values::WeakRef(func, _) =>
+            apply_function(&func.upgrade().unwrap().borrow(), args, allow_incomplete, force_partial),
+        Values::Object(class, cc) => {
+            let Class {members, ..} = &*class.borrow();
+            if let Some(Member {val, ..}) = members.get("__call__") {
+                if let func @ Values::RustFunc(..) = &*val.borrow() {
+                    args.insert(0, Values::Object(class.clone(), *cc));
+                    return apply_function(func, args, false, false)
+                }
+            }
+            str_exn(&format!("Object does not have a valid operator() override"))
+        },
         x => str_exn(&format!("{}: Apply function, {:?}", NFUNC, x)[..]),
     } 
 }

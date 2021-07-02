@@ -152,14 +152,12 @@ fn process_fn_mem(mems: HashMap<String, Member>) -> HashMap<String, Member> {
                     let scope = scope.clone();
                     let rf = move |mut args: Vec<Values>| -> Res {
                         let this = args.remove(0);
-                        if let Values::Ref(ptr, mtble) = this {
-                            if let Values::Object(ptr, ctx) = &*ptr.borrow() {
-                                let is_ctor = ctx == &CallingContext::Constructor;
-                                let mtble = mtble || is_ctor;
-                                let nw_ctx = if is_ctor { *ctx } else { CallingContext::SelfCall };
-                                scope.borrow_mut().add("self".to_owned(), Values::Object(ptr.clone(), nw_ctx), mtble);
-                            } else { panic!("Self is not the first param. Got {:?} and {:?}", ptr, args); }
-                        } else { panic!("Self is not the first param. Got {:?} and {:?}", this, args); }
+                        match this {
+                            Values::Ref(ptr, mtble) => add_self(&*ptr.borrow(), mtble, scope.clone()),
+                            Values::WeakRef(ptr, mtble) => add_self(&*ptr.upgrade().unwrap().borrow(), mtble, scope.clone()),
+                            obj @ Values::Object(..) => add_self(&obj, true, scope.clone()),
+                            x => panic!("Self is not the first param. Got {:?}", x),
+                        };
                         apply_function(&Values::Func(params.clone(), 
                             body.clone(), scope.clone(), pce.clone()), 
                             args, false, false)
@@ -175,6 +173,15 @@ fn process_fn_mem(mems: HashMap<String, Member>) -> HashMap<String, Member> {
         }
     }
     map
+}
+
+fn add_self(val: &Values, mtble: bool, scope: Rc<RefCell<Scope>>) {
+    if let Values::Object(ptr, ctx) = val {
+        let is_ctor = ctx == &CallingContext::Constructor;
+        let mtble = mtble || is_ctor;
+        let nw_ctx = if is_ctor { *ctx } else { CallingContext::SelfCall };
+        scope.borrow_mut().add("self".to_owned(), Values::Object(ptr.clone(), nw_ctx), mtble);
+    } else { panic!("Self is not the first param. Got {:?}", val); }
 }
 
 

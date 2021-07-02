@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use super::eval_class::Class;
 use std::fs;
 use std::io::Write;
+use super::eval_class::Member;
 
 use super::Res::Vl;
 
@@ -146,8 +147,19 @@ fn size_of(val: &Values) -> i32 {
         Values::Tuple(x) => x.len() as i32,
         Values::Unit => 0,
         Values::Ref(ptr, _) => size_of(&ptr.borrow()),
-        Values::Object(ptr, _) => {
+        Values::WeakRef(ptr, _) => size_of(&ptr.upgrade().unwrap().borrow()),
+        Values::Object(ptr, cc) => {
             let Class {name: _, members, ..} = &*ptr.borrow();
+            if let Some(Member{ val, .. }) = members.get("__len__") {
+                if let func @ Values::RustFunc(..) = &*val.borrow() {
+                    match super::eval_functions::apply_function(func, vec![Values::Object(ptr.clone(), *cc)],
+                        false, false)
+                    {
+                        Vl(Values::Int(x)) => return x,
+                        e => panic!("Error evaluating custom length function: {:?}", e),
+                    }
+                }
+            }
             members.len() as i32
         },
         Values::Type(ptr) => {
@@ -205,8 +217,10 @@ fn eval_dot_func(mut args: Vec<Values>, min_args: usize, name: &str,
     let context = args.remove(0);
     match context {
         Values::Ref(ptr, _) if !need_mut => closure(&mut *ptr.borrow_mut(), args),
-        Values::Ref(ptr, true) if need_mut => closure(&mut *ptr.borrow_mut(), args),
-        Values::Ref(..) => str_exn(IMMU_ERR),
+        Values::Ref(ptr, true) if need_mut => closure(&mut *ptr.borrow_mut(), args),       
+        Values::WeakRef(ptr, _) if !need_mut => closure(&mut *ptr.upgrade().unwrap().borrow_mut(), args),
+        Values::WeakRef(ptr, true) => closure(&mut *ptr.upgrade().unwrap().borrow_mut(), args),
+        Values::Ref(..) | Values::WeakRef(..) => str_exn(IMMU_ERR),
         mut v => closure(&mut v, args),
     }
 }
