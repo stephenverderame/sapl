@@ -9,6 +9,7 @@ use super::environment::*;
 use super::vals::to_booly;
 use super::eval_class::*;
 
+/// An iterator over a sapl type
 struct SaplIter<'a> {
     pub it: &'a Values,
     counter: usize,
@@ -112,6 +113,7 @@ pub fn eval_for(names: &Vec<String>, iter: &Ast, if_expr: &Option<Box<Ast>>,
    
 }
 
+/// Gets the iterator sapl object of `v`
 fn get_iter_obj(v: Values) -> Values {
     if let Values::Object(class, cc) = v {
         let Class {members, ..} = &*class.borrow();

@@ -130,12 +130,11 @@ fn lookup(val: &Values, name: &String, scope: &mut impl Environment, val_mut: bo
     if let Values::Ref(ptr, is_var) = &val {
         return lookup(&*ptr.borrow(), name, scope, val_mut && *is_var)
     } else if let Values::WeakRef(ptr, is_var) = &val {
-        println!("Lookup {} on weak ref", name);
         return lookup(&*ptr.upgrade().unwrap().borrow(),
             name, scope, val_mut && *is_var)
     }
     if let Values::Object(ptr, ctx) = &val {
-        if let Ok(v) = class_lookup(&ptr.borrow(), *ctx, name, val_mut) {
+        if let Ok(v) = class_lookup(&ptr.borrow(), *ctx, name, val_mut, scope) {
             return Ok(v);
         }
     } 
@@ -148,11 +147,12 @@ fn lookup(val: &Values, name: &String, scope: &mut impl Environment, val_mut: bo
     }
 }
 
-/// Looks up `name` on an object
-fn class_lookup(class: &Class, ctx: CallingContext, name: &String, val_mut: bool) 
+/// Looks up `name` object `class`
+fn class_lookup(class: &Class, mut ctx: CallingContext, name: &String, val_mut: bool, scope: &impl Environment) 
     -> Result<(Rc<RefCell<Values>>, bool), String>
 {
     let Class {name: c_name, members, ..} = class;
+    ctx = calling_context_if_self(ctx, scope, class);
     if let Some(Member {val, is_var, is_pub}) = members.get(name) {
         if !is_pub && ctx == CallingContext::Public { 
             Err(format!("Attempt to read private value {} from public context", name))
@@ -162,6 +162,29 @@ fn class_lookup(class: &Class, ctx: CallingContext, name: &String, val_mut: bool
             Ok((val.clone(), is_mut))
         }
     } else { Err(format!("Unable to find {} in class {}", name, c_name)) }
+}
+
+/// If the name self is in scope with class name equal to `class.name` then
+/// returns the calling context to be `SelfCall` 
+/// If `class` contains the name of `self` in the friends list, also returns
+/// `SelfCall`
+/// otherwise returns `ctx`
+fn calling_context_if_self(ctx: CallingContext, scope: &impl Environment, 
+    class: &Class) -> CallingContext 
+{
+    if let Some((ptr, _)) = scope.find("self") {
+        if let Values::Object(ptr, _) = &*ptr.borrow() {
+            let Class {name, ..} = &*ptr.borrow();
+            if name.eq(&class.name) && ctx == CallingContext::Public {
+                return CallingContext::SelfCall
+            } else if class.friends.iter().find(|e| -> bool {
+                (*e).eq(name)
+            }).is_some() {
+                return CallingContext::SelfCall
+            }
+        }
+    }
+    ctx
 }
 
 /// Gets the qualified type name of `name` with `ctx_val` as a lookup context
@@ -201,7 +224,7 @@ fn perform_assign_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> R
     if let Ast::Name(x) = left { 
         match scope.update(&x[..], rt) {
             true => Vl(Values::Unit),
-            false => str_exn(IMMU_ERR),
+            false => str_exn(&format!("{}: {}", IMMU_ERR, x)),
         }
     } else if let Ast::Bop(dot_left, Op::Dot, dot_right) = left {
         assign_to_dot(dot_left, dot_right, rt, scope)
@@ -276,12 +299,12 @@ fn perform_update_op(left: &Ast, right: &Ast, scope: &mut impl Environment) -> R
 
 /// Updates a reference by repeatedly applying <-
 fn update_ref(mut reference: Rc<RefCell<Values>>, is_mut: bool, val: Values) -> Res {
-    if !is_mut { return str_exn(IMMU_ERR); }
+    if !is_mut { return str_exn(&format!("{} when updating ref {:?}", IMMU_ERR, &*reference.borrow())); }
     while let Values::Ref(ptr, true) = &*reference.clone().borrow() {
         reference = ptr.clone();
     }
     match &mut *reference.borrow_mut() {
-        Values::Ref(_, false) => str_exn(IMMU_ERR),
+        Values::Ref(_, false) => str_exn(&format!("{} when updating ref {:?}", IMMU_ERR, &*reference.borrow())),
         ptr => {
             *ptr = val;
             Vl(Values::Unit)
@@ -398,7 +421,6 @@ fn index_array(array: &Vec<Values>, indexer: Values) -> Res {
 fn index_obj(val: &Values, index: Values) -> Res {
     if let Values::Object(class, cc) = val {
         if let Some(Member{val, ..}) = class.borrow().members.get("__index__") {
-            println!("Got index member");
             if let func @ Values::RustFunc(..) = &*val.borrow() {
                 return super::eval_functions::apply_function(
                     &func, vec![Values::Object(class.clone(), *cc), index], false, false)
@@ -533,6 +555,10 @@ fn perform_eq_test(left: Values, op: &Op, right: Values) -> Res {
         (Values::Str(x), Op::Neq, Values::Str(y)) => Vl(Values::Bool(!x.eq(&y))),
         (Values::Array(x), Op::Eq, Values::Array(y)) => Vl(Values::Bool(x == y)),
         (Values::Array(x), Op::Neq, Values::Array(y)) => Vl(Values::Bool(x != y)),
+        (Values::Map(x), Op::Eq, Values::Map(y)) => Vl(Values::Bool(x == y)),
+        (Values::Map(x), Op::Neq, Values::Map(y)) => Vl(Values::Bool(x != y)),
+        (Values::Tuple(x), Op::Eq, Values::Tuple(y)) => Vl(Values::Bool(x == y)),
+        (Values::Tuple(x), Op::Neq, Values::Tuple(y)) => Vl(Values::Bool(x != y)),
         (Values::Unit, Op::Eq, Values::Unit) => Vl(Values::Bool(true)),
         (_, Op::Eq, _) => Vl(Values::Bool(false)),
         (x, Op::Neq, y) if x != y => Vl(Values::Bool(true)),

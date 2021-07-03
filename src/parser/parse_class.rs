@@ -10,6 +10,7 @@ pub struct SaplStruct {
     pub publics: Vec<(String, bool, Option<Box<Ast>>)>,
     pub privates: Vec<(String, bool, Option<Box<Ast>>)>,
     pub parents: Vec<String>,
+    pub friends: Vec<String>,
     pub ctor: Option<Box<Ast>>,
     pub dtor: Option<Box<Ast>>,
 }
@@ -21,6 +22,7 @@ impl SaplStruct {
             publics: Vec::<(String, bool, Option<Box<Ast>>)>::new(),
             privates: Vec::<(String, bool, Option<Box<Ast>>)>::new(),
             parents: Vec::<String>::new(),
+            friends: Vec::<String>::new(),
             ctor: None,
             dtor: None,
         }
@@ -91,6 +93,7 @@ fn parse_member(stream: &mut VecDeque<Tokens>, public: bool, object: &mut SaplSt
     match stream.front() {
         Some(&Tokens::Def) => parse_struct_def(consume(stream), public, object),
         Some(&Tokens::Fun) => parse_struct_fun(stream, public, object),
+        Some(&Tokens::Friend) => parse_struct_friend(consume(stream), object),
         tok => Some(format!("Unknown token {:?} in struct definition", tok)),
     }
 }
@@ -146,4 +149,15 @@ fn parse_struct_fun(stream: &mut VecDeque<Tokens>, public: bool, object: &mut Sa
         Ok(_) => panic!("Broken precondition"),
         Err(msg) => Some(msg),
     }
+}
+
+/// Parses friends in a type
+fn parse_struct_friend(stream: &mut VecDeque<Tokens>, object: &mut SaplStruct) -> Option<String> {
+    while let Some(Tokens::Name(x)) = stream.pop_front() {
+        object.friends.push(x);
+        if stream.front() != Some(&Tokens::Comma) { break }
+    }
+    if object.friends.len() == 0 {
+        Some(format!("Missing names after object friend declaration"))
+    } else { None }
 }

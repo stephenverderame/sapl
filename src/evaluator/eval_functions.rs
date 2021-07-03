@@ -123,8 +123,8 @@ fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment
                 capture_into_scope(key, scope, old_scope, dynamic_capture);
             }
         },
-        Ast::Struct(SaplStruct {name: _, publics, privates, parents: _, ctor, dtor}) |
-        Ast::Type(SaplStruct {name: _, publics, privates, parents: _, ctor, dtor}) => {
+        Ast::Struct(SaplStruct {name: _, publics, privates, parents: _, ctor, dtor, ..}) |
+        Ast::Type(SaplStruct {name: _, publics, privates, parents: _, ctor, dtor, ..}) => {
             for mem in publics.iter().chain(privates.iter()) {
                 let (_, _, ast) = mem;
                 capture_scope_from_box(ast, scope, old_scope, dynamic_capture);
@@ -133,7 +133,8 @@ fn capture_into_scope(ast: &Ast, scope: &mut Scope, old_scope: &impl Environment
             capture_scope_from_box(dtor, scope, old_scope, dynamic_capture);
         }, 
         Ast::Placeholder | Ast::VInt(_) | Ast::VStr(_)
-        | Ast::VBool(_) | Ast::VFloat(_) | Ast::Import(..) => (),
+        | Ast::VBool(_) | Ast::VFloat(_) | Ast::Import(..)
+        | Ast::None => (),
 
     }
 }

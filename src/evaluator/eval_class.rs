@@ -40,6 +40,7 @@ pub struct Class {
     pub name: String,
     pub members: HashMap<String, Member>,
     pub dtor: Option<Values>,
+    pub friends: Vec<String>,
 
 }
 
@@ -59,11 +60,11 @@ impl Drop for Class {
 }*/
 
 pub fn eval_class_def(class: &SaplStruct, scope: &mut impl Environment, public: bool) -> Res {
-    let mems = match get_object_members(class, scope) {
+    let (mems, friends) = match get_object_members(class, scope) {
         Ok(map) => map,
         Err(e) => return e,
     };
-    match get_class_ctor(mems, class, scope) {
+    match get_class_ctor(mems, class, scope, friends) {
         Vl(ctor) => super::scope_add(scope, &class.name, ctor, false, public),
         e => return e,
     };
@@ -71,8 +72,8 @@ pub fn eval_class_def(class: &SaplStruct, scope: &mut impl Environment, public: 
 }
 
 pub fn eval_type_def(interface: &SaplStruct, scope: &mut impl Environment, public: bool) -> Res {
-    let mems = match get_object_members(interface, scope) {
-        Ok(map) => map,
+    let (mems, friends) = match get_object_members(interface, scope) {
+        Ok(tup) => tup,
         Err(e) => return e,
     };
     super::scope_add(scope, &interface.name, Values::Type(Rc::new(
@@ -80,22 +81,29 @@ pub fn eval_type_def(interface: &SaplStruct, scope: &mut impl Environment, publi
             name: interface.name.to_owned(),
             members: mems,
             dtor: None,
+            friends: friends,
         }
     )), false, public);
     Vl(Values::Unit)
 }
 
+/// Gets a tuple of the all of the object's members and friends including
+/// the ones that are inherited from parents or `Res` on error
 fn get_object_members(object: &SaplStruct, scope: &mut impl Environment) 
-    -> Result<HashMap<String, Member>, Res>
+    -> Result<(HashMap<String, Member>, Vec<String>), Res>
 {
     let mut mems = HashMap::<String, Member>::new();
+    let mut all_friends = object.friends.clone();
     for parent in &object.parents {
         if let Some((ptr, _)) = super::name_lookup(&parent, scope) {
             if let Values::Type(ptr) = &*ptr.borrow() {
-                let Class {name:_, members, ..} = ptr.as_ref();
+                let Class {name:_, members, friends, ..} = ptr.as_ref();
                 for (name, mem) in members {
                     println!("Adding {:?}", mem);
                     mems.insert(name.clone(), mem.clone());
+                }
+                for name in friends {
+                    all_friends.push(name.clone());
                 }
             } else { return Err(str_exn("Cannot subtype from non-type")); }
         } else { return Err(ukn_name(parent)); }
@@ -106,10 +114,14 @@ fn get_object_members(object: &SaplStruct, scope: &mut impl Environment)
     if let Some(r) = iter_members(&mut mems, &object.publics, true, scope) {
         return Err(r);
     }
-    Ok(mems)
+    Ok((mems, all_friends))
 }
 
 
+/// Iterates through a list of members of an object
+/// `mems` the total member list (output)
+/// `container` is a list of members
+/// `is_pub` if the member list is public
 fn iter_members(mems: &mut HashMap<String, Member>, container: &Vec<(String, bool, Option<Box<Ast>>)>, is_pub: bool, scope: &mut impl Environment) 
     -> Option<Res>
 {
@@ -139,7 +151,7 @@ fn iter_members(mems: &mut HashMap<String, Member>, container: &Vec<(String, boo
 /// Processes object members by iterating through and converting functions 
 /// to rust functions with all members added to scope
 /// The new function will wrap the old one and expect a self reference as the first parameter to 
-fn process_fn_mem(mems: HashMap<String, Member>) -> HashMap<String, Member> {
+fn process_fn_mem(mems: HashMap<String, Member>, ctor: Rc<RefCell<Values>>, cname: &String) -> HashMap<String, Member> {
     let mut map = HashMap::<String, Member>::new();
     for pair in mems {
         match pair {           
@@ -150,6 +162,8 @@ fn process_fn_mem(mems: HashMap<String, Member>) -> HashMap<String, Member> {
                     let body = body.clone();
                     let pce = pce.clone();
                     let scope = scope.clone();
+                    let ctor = ctor.clone();
+                    let cname = cname.clone();
                     let rf = move |mut args: Vec<Values>| -> Res {
                         let this = args.remove(0);
                         match this {
@@ -158,6 +172,7 @@ fn process_fn_mem(mems: HashMap<String, Member>) -> HashMap<String, Member> {
                             obj @ Values::Object(..) => add_self(&obj, true, scope.clone()),
                             x => panic!("Self is not the first param. Got {:?}", x),
                         };
+                        scope.borrow_mut().add_direct(cname.clone(), ctor.clone(), false);
                         apply_function(&Values::Func(params.clone(), 
                             body.clone(), scope.clone(), pce.clone()), 
                             args, false, false)
@@ -175,6 +190,8 @@ fn process_fn_mem(mems: HashMap<String, Member>) -> HashMap<String, Member> {
     map
 }
 
+/// Adds the `self` variable to scope
+/// The self variable will have the SelfCall or Constructor calling context
 fn add_self(val: &Values, mtble: bool, scope: Rc<RefCell<Scope>>) {
     if let Values::Object(ptr, ctx) = val {
         let is_ctor = ctx == &CallingContext::Constructor;
@@ -185,7 +202,7 @@ fn add_self(val: &Values, mtble: bool, scope: Rc<RefCell<Scope>>) {
 }
 
 
-fn get_class_ctor(mems: HashMap<String, Member>, class: &SaplStruct, scope: &mut impl Environment) -> Res {
+fn get_class_ctor(mems: HashMap<String, Member>, class: &SaplStruct, scope: &mut impl Environment, friends: Vec<String>) -> Res {
     let ctor = if let Some(func) = &class.ctor {
         match eval_functions::func_to_val(&*func, scope) {
             Vl(v) => Some(v),
@@ -197,20 +214,24 @@ fn get_class_ctor(mems: HashMap<String, Member>, class: &SaplStruct, scope: &mut
         _ => 0,
     };
     let name = class.name.clone();
+    let rust_ctor = Rc::new(RefCell::new(Values::Unit));
+    let rc = rust_ctor.clone();
     let func = move |args: Vec<Values>| -> Res {
         let mems = mems.clone();
         let ctor = ctor.clone();
         let name = name.clone();
         let self_obj = Rc::new(RefCell::new(
             Class {
-                name,
-                members: process_fn_mem(mems),
+                name: name.clone(),
+                members: process_fn_mem(mems, rc.clone(), &name.clone()),
                 dtor: None,
+                friends: friends.clone(),
             }
         ));
         if let Some(Values::Func(ps, body, fn_scope, pce)) = ctor {
             fn_scope.borrow_mut().add("self".to_owned(), 
                 Values::Object(self_obj.clone(), CallingContext::Constructor), true);
+            fn_scope.borrow_mut().add_direct(name, rc.clone(), false);
             match apply_function(&Values::Func(ps, body, fn_scope, pce), 
                 args, false, false) 
             {
@@ -221,6 +242,8 @@ fn get_class_ctor(mems: HashMap<String, Member>, class: &SaplStruct, scope: &mut
         Vl(Values::Object(self_obj, CallingContext::Public))
 
     };
-    Vl(Values::RustFunc(Rc::new(func), min_args))
+    let fun = Rc::new(func);
+    *(rust_ctor.borrow_mut()) = Values::RustFunc(fun.clone(), min_args);
+    Vl(Values::RustFunc(fun, min_args))
 
 }

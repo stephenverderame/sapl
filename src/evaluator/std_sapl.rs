@@ -20,7 +20,6 @@ pub fn get_std_environment() -> Scope {
     add_func(&mut scope, "assert", eval_assert, 1);
     add_func(&mut scope, "len", eval_len, 1);
     add_func(&mut scope, "random", eval_rand, 1);
-    add_name(&mut scope, "None", Values::Unit);
     add_func(&mut scope, "array::push_back", arr_push_back, 2);
     add_func(&mut scope, "array::contains", arr_contains_all, 2);
     add_func(&mut scope, "map::contains", map_contains_all, 2);
@@ -71,10 +70,6 @@ fn add_func(scope: &mut Scope, name: &str,
     func: fn(Vec<Values>) -> Res, min_args: usize) 
 {
     scope.add(name.to_owned(), Values::RustFunc(Rc::new(func), min_args), false);
-}
-
-fn add_name(scope: &mut Scope, name: &str, val: Values) {
-    scope.add(name.to_owned(), val, false);
 }
 
 /// Evaluates typeof()
@@ -220,7 +215,7 @@ fn eval_dot_func(mut args: Vec<Values>, min_args: usize, name: &str,
         Values::Ref(ptr, true) if need_mut => closure(&mut *ptr.borrow_mut(), args),       
         Values::WeakRef(ptr, _) if !need_mut => closure(&mut *ptr.upgrade().unwrap().borrow_mut(), args),
         Values::WeakRef(ptr, true) => closure(&mut *ptr.upgrade().unwrap().borrow_mut(), args),
-        Values::Ref(..) | Values::WeakRef(..) => str_exn(IMMU_ERR),
+        x @ Values::Ref(..) | x @ Values::WeakRef(..) => str_exn(&format!("{} during dot application of {:?}", IMMU_ERR, x)),
         mut v => closure(&mut v, args),
     }
 }

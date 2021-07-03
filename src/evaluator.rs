@@ -72,9 +72,11 @@ fn eval_keep_all(ast: &Ast, scope: &mut impl Environment) -> Res {
         Ast::Type(interface) => eval_type_def(interface, scope, false),
         Ast::Export(ast) => eval_export(&*ast, scope),
         Ast::Import(file, prefix) => eval_import(file, prefix, scope, false),
+        Ast::None => Vl(Values::Unit),
     }
 }
 
+/// True if all names in `names` are valid
 fn are_valid_names(names: &Vec<(String, bool)>, scope: &impl Environment) -> bool {
     for (name, _) in names {
         if !is_valid_name(name, scope) { return false; }
@@ -82,12 +84,14 @@ fn are_valid_names(names: &Vec<(String, bool)>, scope: &impl Environment) -> boo
     true
 }
 
+/// True if `name` is valid
+/// A valid name is not a type or meta-type name or self
 fn is_valid_name(name: &String, scope: &impl Environment) -> bool {
     match &name[..] {
         "int" | "float" | "string" |
         "object" | "tuple" | "array" |
         "map" | "none" | "some" | "range" |
-        "bool" | "number" | "ref" => false,
+        "bool" | "number" | "ref" | "self" => false,
         _ if name.starts_with("tuple_") && 
             name[name.find('_').unwrap() + 1..name.len()].parse::<i32>().is_ok() => false,
     _ => {
@@ -108,16 +112,19 @@ fn eval_ref(left: &Ast, op: &Op, scope: &mut impl Environment) -> Res {
                 if !mutable || mutable && mtble {
                     Vl(Values::Ref(ptr.clone(), mutable))
                 } else {
-                    str_exn(IMMU_ERR)
+                    str_exn(&format!("{}: {}", IMMU_ERR, x))
                 }
             } else { ukn_name(x) }
         },
         _ => {
-            match eval(left, scope) {
+            match eval_keep_all(left, scope) {
                 Vl(Values::Ref(ptr, mt)) if !mutable || mt && mutable => {
                     Vl(Values::Ref(ptr.clone(), mutable))
-                },
-                Vl(Values::Ref(..)) => str_exn(IMMU_ERR),
+                },                
+                Vl(Values::WeakRef(ptr, mt)) if !mutable || mt => 
+                    Vl(Values::Ref(ptr.upgrade().unwrap(), mutable)),
+                Vl(rf @ Values::Ref(..)) | Vl(rf @ Values::WeakRef(..)) => 
+                    str_exn(&format!("{}: {:?}", IMMU_ERR, rf)),
                 Vl(val) => {
                     Vl(Values::Ref(Rc::new(RefCell::new(val)), mutable))
                 },
@@ -147,6 +154,8 @@ fn iter_over(start: i32, end: i32, func: &mut dyn FnMut(i32) -> Option<Res>) -> 
     None
 }
 
+/// Adds `name` and `val` to scope
+/// `is_pub` - true if the value is exported
 fn scope_add(scope: &mut impl Environment, name: &str, val: Values, 
     is_mut: bool, is_pub: bool) 
 {
@@ -154,6 +163,8 @@ fn scope_add(scope: &mut impl Environment, name: &str, val: Values,
     scope.add(name, val, is_mut);
 }
 
+/// @see `scope_add`
+/// Adds a pointer directly
 fn scope_add_dir(scope: &mut impl Environment, name: &str, val: Rc<RefCell<Values>>, 
     is_mut: bool, is_pub: bool) 
 {
@@ -226,6 +237,7 @@ fn deref(mut ptr: Rc<RefCell<Values>>) -> Res {
     Vl(ptr.borrow().clone())
 }
 
+/// Evaluates the include file and returns the result of execution
 fn eval_include(path: String, scope: &mut impl Environment) -> Res {
     use std::fs;
     match fs::File::open(&path) {
@@ -275,6 +287,7 @@ fn eval_map(es: &Vec<(Ast, Ast)>, scope: &mut impl Environment) -> Res {
     Vl(Values::Map(Box::new(map)))
 }
 
+/// Evaluates an exported definition
 fn eval_export(def: &Ast, scope: &mut impl Environment) -> Res {
     match def {
         Ast::Let(names, ast) => eval_let(&names, &*ast, scope, true),
@@ -288,6 +301,7 @@ fn eval_export(def: &Ast, scope: &mut impl Environment) -> Res {
     }
 }
 
+/// Performs free name lookup for `name`
 fn name_lookup(name: &str, scope: &impl Environment) -> Option<(Rc<RefCell<Values>>, bool)> {
     if let Some(p) = scope.find(name) { 
         return Some(p); 
@@ -302,6 +316,7 @@ fn name_lookup(name: &str, scope: &impl Environment) -> Option<(Rc<RefCell<Value
     
 }
 
+/// Imports `file` by evaluating it an copying all exported definitions into `scope`
 fn eval_import(file: &str, prefix: &Option<String>, scope: &mut impl Environment, public: bool) -> Res {    
     match std::fs::File::open(file) {
         Ok(file) => {

@@ -40,7 +40,7 @@ pub enum Ast {
     FnApply(Box<Ast>, Vec<Box<Ast>>),
     Array(Vec<Box<Ast>>),
     Tuple(Vec<Box<Ast>>),
-    Placeholder,
+    Placeholder, None,
     Uop(Box<Ast>, Op),
     Map(Box<Vec<(Ast, Ast)>>),
     Try(Box<Ast>, String, Box<Ast>),
@@ -71,15 +71,14 @@ fn parse_single(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
 /// True if `tok` can start an expression
 fn tok_is_expr(tok: &Tokens) -> bool {
     match tok {
-        Tokens::Integer(_) | Tokens::Float(_)
-        | Tokens::Bool(_) | Tokens::TString(_)
-        | Tokens::LParen | Tokens::If 
+        Tokens::LParen | Tokens::If 
         | Tokens::Name(_) | Tokens::OpQ 
         | Tokens::LBracket | Tokens::OpNegate 
         | Tokens::LBrace | Tokens::Try 
         | Tokens::Fun =>
         true,
         x if tok_is_pre_uop(x) => true,
+        x if tok_is_val(x) => true,
         _ => false,
     }
 }
@@ -103,6 +102,7 @@ fn tok_to_val(tok: Tokens) -> Result<Ast, String> {
         Tokens::TString(x) => Ok(Ast::VStr(x)),
         Tokens::Bool(x) => Ok(Ast::VBool(x)),
         Tokens::Name(x) => Ok(Ast::Name(x)),
+        Tokens::None => Ok(Ast::None),
         _ => Err(format!("{:?} is not a value", tok)),
     }
 }

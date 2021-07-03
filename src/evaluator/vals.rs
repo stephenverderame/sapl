@@ -129,7 +129,7 @@ pub fn to_booly(b: &Res) -> Result<bool, String> {
         | Vl(Values::Type(_)) => Ok(true),        
         Vl(_) => Ok(false),
         Bad(e) => Err(e.to_string()),
-       _ => Err("Return/exn value cannot be converted to bool".to_owned()),
+       e => Err(format!("Return/exn value cannot be converted to bool: got {:?}", e)),
     }
 }
 

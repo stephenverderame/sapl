@@ -905,10 +905,9 @@ mod tests {
         "#, Values::Int(3628800));
 
         assert_eval_eq(r#"let var n = 1; let p = &&n; p = 3"#, 
-            Res::Exn(Values::Str("Cannot mutate an immutable value".to_owned())));
+            Res::Exn(Values::Str("Cannot mutate an immutable value: p".to_owned())));
 
-        assert_eval_eq(r#"let var n = 1; let p = &n; p <- 3"#, 
-            Res::Exn(Values::Str("Cannot mutate an immutable value".to_owned())));
+        assert_sapl_eq(r#"try { let var n = 1; let p = &n; p <- 3 } catch _: true"#, "true");
 
         assert_val_eq(r#"
         let var lst = [];
@@ -1093,6 +1092,7 @@ mod tests {
                     "hello".to_owned(), Vec::<String>::new(), Box::new(Ast::VInt(0)), None))))],
             privates: vec![("ssn".to_owned(), false, None)],
             parents: Vec::<String>::new(),
+            friends: Vec::<String>::new(),
         };
         assert_parse_str_eq(r#"
         struct Person {
@@ -1533,6 +1533,84 @@ mod tests {
         }
         buf
         "#, "[5, 4, 3, 2, 1]");
+
+        assert_sapl_eq(r#"
+        struct ListIter {
+            def var nx, var val
+
+            fun ListIter start {
+                if start is List:
+                    self.val = start.val;
+                    self.nx = start.next
+                else:
+                    throw 'Invalid argument passed to ListIter'
+            }
+
+            pub fun __next__ {
+                let val = self.val;
+                if self.nx is some:
+                    self.val = self.nx.val;
+                    self.nx = self.nx.next
+                else:
+                    self.val = None
+                val
+            }
+        }
+        struct List {
+            pub def var val
+            def var next
+            friend ListIter
+
+            fun List val {
+                self.next = None;
+                if val is array && val.len() >= 1:
+                    self.val = val[0];
+                    for idx in 1 .. val.len():
+                        self.push_back(val[idx])
+                else:
+                    self.val = val
+                
+            }
+
+            pub fun push_back x {
+                let var n = &&self.next;
+                while *n is some {
+                    n = &&n.next
+                }
+                n <- List(x)
+            }
+
+            pub fun __len__ {
+                let var n = &self.next;
+                let var count = 1;
+                while *n is some {
+                    n = &n.next;
+                    count = count + 1
+                }
+                count
+            }
+
+            pub fun contains x {
+                if x == self.val: true
+                else if self.next is some:
+                    self.next.contains(x)
+                else:
+                    false
+            }
+
+            pub fun __iter__ {
+                ListIter(self)
+            }
+        }
+        let lst = List([10, 20, 30]);
+        let tup = (lst.contains(10), lst.len(), lst.contains(50));
+
+        let var sum = 0;
+        for e in lst {
+            sum = sum + e
+        }
+        (tup, sum)
+        "#, "((true, 3, false), 60)");
     }
 
     #[test]

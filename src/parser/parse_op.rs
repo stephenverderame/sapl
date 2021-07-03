@@ -28,7 +28,8 @@ pub fn tok_is_bop(tok: &Tokens) -> bool {
 pub fn tok_is_val(tok: &Tokens) -> bool {
     match tok {
         Tokens::Integer(_) | Tokens::Bool(_)
-        | Tokens::TString(_) | Tokens::Float(_) => 
+        | Tokens::TString(_) | Tokens::Float(_) 
+        | Tokens::None => 
             true,
         _ => false,
     }
@@ -148,15 +149,15 @@ fn precedence(op: Op) -> i32 {
         Op::Dot => 13,
         Op::Ref | Op::Deref | Op::MutRef | Op::Include => 12,
         Op::Index | Op::Neg | Op::AsBool | Op::Not => 11,
-        Op::Exp => 10,
-        Op::Mult | Op::Mod | Op::Div | Op::And => 9,
-        Op::Plus | Op::Sub | Op::Or => 8,
-        Op::Eq | Op::Neq | Op::Leq | Op::Geq | Op::Lt | Op::Gt => 7,
-        Op::Land => 6,
-        Op::Lor => 5,       
-        Op::Range | Op::Concat => 4,
-        Op::Pipeline => 3,
-        Op::As | Op::Is => 2,
+        Op::As | Op::Is => 10,
+        Op::Exp => 9,
+        Op::Mult | Op::Mod | Op::Div | Op::And => 8,
+        Op::Plus | Op::Sub | Op::Or => 7,
+        Op::Eq | Op::Neq | Op::Leq | Op::Geq | Op::Lt | Op::Gt => 6,
+        Op::Land => 5,
+        Op::Lor => 4,       
+        Op::Range | Op::Concat => 3,
+        Op::Pipeline => 2,
         Op::Return | Op::Throw => 1,
         Op::Assign | Op::Update => 0,
     }
