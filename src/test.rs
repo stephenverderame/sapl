@@ -1540,7 +1540,7 @@ mod tests {
 
             fun ListIter start {
                 if start is List:
-                    self.val = start.val;
+                    self.val = Some(start.val);
                     self.nx = start.next
                 else:
                     throw 'Invalid argument passed to ListIter'
@@ -1549,7 +1549,7 @@ mod tests {
             pub fun __next__ {
                 let val = self.val;
                 if self.nx is some:
-                    self.val = self.nx.val;
+                    self.val = Some(self.nx.val);
                     self.nx = self.nx.next
                 else:
                     self.val = None
@@ -1618,6 +1618,41 @@ mod tests {
         assert_sapl_eq("'😀'", "'😀'");
         assert_sapl_eq("'hello'.contains('el')", "true");
         assert_sapl_eq("'My name is Joe '.split(' ')", "['My', 'name', 'is', 'Joe', '']");
+    }
+
+    #[test]
+    fn some_test() {
+        assert_sapl_eq("let x = Some(5); x", "5");
+        assert_sapl_eq("Some(None) is some", "true");
+        assert_sapl_eq("let var x = None; x = Some(60); x", "Some(60)");
+        assert_sapl_eq(r#"
+        let lst = [None, None, 1, None];
+        let var cnt = 0;
+        for e in lst {
+            if e is number:
+                cnt = cnt + e
+        }
+        cnt
+        "#, "1");
+
+        assert_sapl_eq(r#"
+        struct Iter {
+            def var cnt = 0
+
+            pub fun __next__ {
+                self.cnt = self.cnt + 1;
+                if self.cnt < 11:
+                    Some(None)
+                else:
+                    None
+            }
+        }
+        let var cnt = 0;
+        for e in Iter() {
+            cnt = cnt + 1
+        }
+        cnt
+        "#, "10");
     }
 
     #[test]

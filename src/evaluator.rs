@@ -179,6 +179,13 @@ fn eval_let(names: &Vec<(String, bool)>, ast: &Ast,
     -> Res 
 {
     match eval(ast, scope) {
+        Vl(Values::Tuple(es)) if names.len() == es.len() => {
+            for (nm, v) in names.iter().zip(es.into_iter()) {
+                let (nm, is_mut) = nm;
+                scope_add(scope, nm, v, *is_mut, public);
+            }
+            Vl(Values::Unit)
+        },
         Vl(val) if names.len() == 1 => {
             let (nm, is_mut) = names.get(0).unwrap();
             scope_add(scope, nm, val, *is_mut, public);
@@ -189,13 +196,6 @@ fn eval_let(names: &Vec<(String, bool)>, ast: &Ast,
             let (nm2, mut2) = &names[1];
             scope_add(scope, nm1, *a, *mut1, public);
             scope_add(scope, nm2, *b, *mut2, public);
-            Vl(Values::Unit)
-        },
-        Vl(Values::Tuple(es)) if names.len() == es.len() => {
-            for (nm, v) in names.iter().zip(es.into_iter()) {
-                let (nm, is_mut) = nm;
-                scope_add(scope, nm, v, *is_mut, public);
-            }
             Vl(Values::Unit)
         },
         Vl(_) => str_exn(INV_DEF),

@@ -36,6 +36,7 @@ pub fn get_std_environment() -> Scope {
     add_func(&mut scope, "println", eval_cout_ln, 0);
     add_func(&mut scope, "string::contains", string_contains, 2);
     add_func(&mut scope, "string::split", str_split, 2);
+    add_func(&mut scope, "Some", eval_some, 1);
     scope
 }
 
@@ -485,4 +486,13 @@ fn eval_str_split(string: &String, delim: &String) -> Res {
         res_array.push(Values::Str(elem.to_string()));
     }
     Vl(Values::Array(Box::new(res_array)))
+}
+
+fn eval_some(mut args: Vec<Values>) -> Res {
+    if args.len() == 1 {
+        let vl = args.pop().unwrap();
+        Vl(Values::Tuple(Box::new(vec![vl])))
+    } else {
+        inv_arg("Some", Some(&format!("Expected 1 arguments. Got {:?}", args)))
+    }
 }
