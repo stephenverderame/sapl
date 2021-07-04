@@ -18,7 +18,7 @@ pub enum Values {
     Str(String),
     Unit,
     Bool(bool),
-    Func(Vec<String>, Ast, Rc<RefCell<Scope>>, Option<Ast>),
+    Func(Vec<(String, bool, Option<Ast>)>, Ast, Rc<RefCell<Scope>>, Option<Ast>),
     Array(Box<Vec<Values>>),
     Tuple(Box<Vec<Values>>),
     Range(Box<Values>, Box<Values>),

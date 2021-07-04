@@ -37,6 +37,7 @@ pub fn get_std_environment() -> Scope {
     add_func(&mut scope, "string::contains", string_contains, 2);
     add_func(&mut scope, "string::split", str_split, 2);
     add_func(&mut scope, "Some", eval_some, 1);
+    add_func(&mut scope, "clone", eval_clone, 1);
     scope
 }
 
@@ -494,5 +495,35 @@ fn eval_some(mut args: Vec<Values>) -> Res {
         Vl(Values::Tuple(Box::new(vec![vl])))
     } else {
         inv_arg("Some", Some(&format!("Expected 1 arguments. Got {:?}", args)))
+    }
+}
+
+fn eval_clone(mut args: Vec<Values>) -> Res {
+    if args.len() == 1 {
+        let arg = args.pop().unwrap();
+        do_clone(&arg)
+    } else {
+        inv_arg("clone", Some("expected 1 argument"))
+    }
+}
+
+fn do_clone(val: &Values) -> Res {
+    match val {
+        Values::Ref(data, mu) => match do_clone(&*data.borrow()) {
+            Vl(v) => Vl(Values::Ref(Rc::new(RefCell::new(v)), *mu)),
+            e => e,
+        },
+        Values::WeakRef(data, _) => do_clone(&*data.upgrade().unwrap().borrow()),
+        Values::Object(data, cc) => {
+            let Class {members, ..} = &*data.borrow();
+            if let Some(Member { val: v, ..}) = members.get("__clone__") {
+                if let f @ Values::RustFunc(..) = &*v.borrow() {
+                    return super::eval_functions::apply_function(f, vec![Values::Object(data.clone(), *cc)], false, false)
+                }
+            }
+            Vl(Values::Object(Rc::new(RefCell::new(data.borrow().clone())), *cc))
+        },
+        x => Vl(x.clone()),
+
     }
 }

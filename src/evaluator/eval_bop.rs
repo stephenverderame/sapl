@@ -48,7 +48,7 @@ fn eval_bop_vals(left: Values, op: &Op, right: Res, scope: &mut impl Environment
             } else { panic!("matches! failed") }
         },
         (Vl(right), op @ Op::Eq) | (Vl(right), op @ Op::Neq) =>
-            perform_eq_test(left, op, right),
+            perform_eq_test(&left, op, &right),
         (Vl(right), Op::Range) => Vl(Values::Range(Box::new(left), Box::new(right))),
         (Vl(right), Op::Concat) => perform_concat(left, right),
         (Vl(right), op) => perform_bop(left, op, right),
@@ -547,22 +547,27 @@ fn perform_bop(vleft: Values, op: &Op, vright: Values) -> Res {
 }
 
 /// Determines if `left op right` where `op` is an equality operator
-fn perform_eq_test(left: Values, op: &Op, right: Values) -> Res {
+fn perform_eq_test(left: &Values, op: &Op, right: &Values) -> Res {
     match (left, op, right) {
         (Values::Int(x), Op::Eq, Values::Int(y)) => Vl(Values::Bool(x == y)),
         (Values::Bool(x), Op::Eq, Values::Bool(y)) => Vl(Values::Bool(x == y)),
-        (Values::Str(x), Op::Eq, Values::Str(y)) => Vl(Values::Bool(x.eq(&y))),
-        (Values::Str(x), Op::Neq, Values::Str(y)) => Vl(Values::Bool(!x.eq(&y))),
+        (Values::Str(x), Op::Eq, Values::Str(y)) => Vl(Values::Bool(x.eq(y))),
         (Values::Array(x), Op::Eq, Values::Array(y)) => Vl(Values::Bool(x == y)),
-        (Values::Array(x), Op::Neq, Values::Array(y)) => Vl(Values::Bool(x != y)),
         (Values::Map(x), Op::Eq, Values::Map(y)) => Vl(Values::Bool(x == y)),
-        (Values::Map(x), Op::Neq, Values::Map(y)) => Vl(Values::Bool(x != y)),
         (Values::Tuple(x), Op::Eq, Values::Tuple(y)) => Vl(Values::Bool(x == y)),
-        (Values::Tuple(x), Op::Neq, Values::Tuple(y)) => Vl(Values::Bool(x != y)),
         (Values::Unit, Op::Eq, Values::Unit) => Vl(Values::Bool(true)),
+        (Values::Object(a, _), Op::Eq, Values::Object(b, _)) => Vl(Values::Bool(a == b)),
+        (Values::Func(params1, body1, scope1, pce1), Op::Eq, Values::Func(params2, body2, scope2, pce2)) => 
+            Vl(Values::Bool(params1 == params2 && body1 == body2 && scope1 == scope2 && pce1 == pce2)),
+        (Values::Ref(ptr, _), op, right) => perform_eq_test(&*ptr.borrow(), op, right),
+        (left, op, Values::Ref(ptr, _)) => perform_eq_test(left, op, &*ptr.borrow()),
+        (Values::WeakRef(ptr, _), op, right) => perform_eq_test(&*ptr.upgrade().unwrap().borrow(), op, right),
+        (left, op, Values::WeakRef(ptr, _)) => perform_eq_test(left, op, &*ptr.upgrade().unwrap().borrow()),
         (_, Op::Eq, _) => Vl(Values::Bool(false)),
-        (x, Op::Neq, y) if x != y => Vl(Values::Bool(true)),
-        (_, Op::Neq, _) => Vl(Values::Bool(false)),
+        (x, Op::Neq, y) => match perform_eq_test(x, &Op::Eq, y) {
+            Vl(Values::Bool(x)) => Vl(Values::Bool(!x)),
+            e => e,
+        },
         (left, op, right) => bad_op(&left, Some(&right), *op),
     }
 }

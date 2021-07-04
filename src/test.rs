@@ -1079,17 +1079,18 @@ mod tests {
         crate::parser::SaplStruct {
             name: "Person".to_owned(),
             ctor: Some(Box::new(
-                Ast::Func("Person".to_owned(), vec!["name".to_owned()],
+                Ast::Func("Person".to_owned(), vec![("name".to_owned(), false, None)],
                     Box::new(Ast::VInt(0)), None)
             )),
             dtor: Some(Box::new(
-                Ast::Func("`Person".to_owned(), Vec::<String>::new(),
+                Ast::Func("`Person".to_owned(), Vec::<(String, bool, Option<Box<Ast>>)>::new(),
                     Box::new(Ast::VInt(0)), None)
             )),
             publics: vec![("name".to_owned(), false, None),
                 ("age".to_owned(), true, Some(Box::new(Ast::VInt(0)))),
                 ("hello".to_owned(), false, Some(Box::new(Ast::Func(
-                    "hello".to_owned(), Vec::<String>::new(), Box::new(Ast::VInt(0)), None))))],
+                    "hello".to_owned(), Vec::<(String, bool, Option<Box<Ast>>)>::new(), 
+                    Box::new(Ast::VInt(0)), None))))],
             privates: vec![("ssn".to_owned(), false, None)],
             parents: Vec::<String>::new(),
             friends: Vec::<String>::new(),
@@ -1611,6 +1612,95 @@ mod tests {
         }
         (tup, sum)
         "#, "((true, 3, false), 60)");
+    }
+
+    #[test]
+    fn clone_tests() {
+        assert_sapl_eq(r#"
+        struct Obj {
+            pub def var a, var b
+
+            fun Obj a b { 
+                self.a = a;
+                self.b = b
+            }
+        }
+
+        let var o = Obj(10, 20);
+        let var b = o.clone();
+        let var c = b;
+        b.a = 0;
+        o.a + c.a
+        "#, "10");
+
+        
+
+        assert_sapl_eq(r#"
+        let var name = 10;
+        let r = &&name;
+        let s = r.clone();
+        r <- 20;
+        *r + *s
+        "#, "30");
+
+        assert_sapl_eq(r#"
+        struct Obj1 {
+            pub def var a, var b
+
+            fun Obj1 var a b { 
+                self.a = &&a;
+                self.b = b
+            }
+
+            fun __clone__ {
+                Obj1(*self.a, self.b)
+            }
+        }
+
+        struct Obj2 {
+            pub def var a, var b
+
+            fun Obj2 var a b { 
+                self.a = &&a;
+                self.b = b
+            }
+        }
+
+        let var a1 = Obj1(10, 20);
+        let var b1 = a1.clone();
+        a1.a <- 20;
+        let test1 = *b1.a; //10
+
+        let var a2 = Obj2(10, 20);
+        let var b2 = a2.clone();
+        b2.a <- 20;
+        *a2.a + test1
+        "#, "30");
+    }
+
+    #[test]
+    fn precondition_tests() {
+        assert_sapl_eq(r#"
+        fun add (x: number) (y: number) -> number {
+            x + y
+        }
+
+        add(20, 30.0) +
+            try: add('Hello', " there") catch _: 0
+        "#, "20 + 30.0 + 0");
+
+        assert_sapl_eq(r#"
+        fun is_valid_param x {
+            x is int
+        }
+
+        fun add (x: (arg + arg)?) (y: is_valid_param(arg)) {
+            x + y
+        }
+
+        add('Hello ', 30) +
+            try: add('Hello', 54.0) catch _: 0
+        "#, "'Hello 300'");
     }
 
     #[test]

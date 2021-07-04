@@ -61,7 +61,7 @@ let _ = 10;
 
 ## Types
 
-* *Some*
+* *some*
     * *number*
         * int
         * float
@@ -79,10 +79,10 @@ let _ = 10;
         * `TypeName`
             * Structs and Types are their own type
     * ref
-* *None*
+* *none*
     * unit
 
-Types are divided into two classes, `Some` types and `None` types. Every type, with the exception of `unit`, is a `Some` type. `int` and `float` are also part of a smaller subclass of types called `number`. Essentially, every value in sapl is a variant that can take on one of the enumerated types or be empty.
+Types are divided into two classes, `some` types and `none` types. Every type, with the exception of `unit`, is a `some` type. `int` and `float` are also part of a smaller subclass of types called `number`. Essentially, every value in sapl is a variant that can take on one of the enumerated types or be empty. Type names in italics are *meta-types*, or type categories and not actual types themselves. Meta-types can be used to type checking as a type that is part of a meta-type *is* that meta-type. For example, a `float` *is* a `number`.
 
 A string literal can be defined with single or double quotes. String literals can contain new lines.
 
@@ -142,11 +142,11 @@ The following are pretty standard operators that work as you'd expect:
     ```
 
 * `is` is the type check operator
-    * It evaluates its left branch and requires a name on it's right branch which is interpreted as a type or *meta-type*\
+    * It evaluates its left branch and requires a name on it's right branch which is interpreted as a type or *meta-type*
     * *meta-types* are not types themselves, but categories of types
     * `<expr> is <name>`
     ```Javascript
-    5 is Some //true
+    5 is some //true, some meta-type
     (10, 23) is tuple_2 // true
     {'key': 'value'} is array //false
     (10, 'Test', [50, 10]) is tuple //true, tuple meta-type
@@ -167,6 +167,13 @@ The following are pretty standard operators that work as you'd expect:
     * An array can be converted to a map by making each string representation of the element's index its key
         * `[1, 2] as map == {'0': 1, '1': 2}`
 
+* `==` and `!=` compare by *structural equality*
+    * No types are converted, expect for references which check wether the data they point to is equal to the data of the other comparator
+    * Therefore `0` stored as an `int` is not equal to `0` stored as a float since no types are converted
+    * Built in functions cannot be compared. This also includes member functions of an object, which are wrapped in a function implemented in Rust
+
+* `..` is the binary range operator
+    * It constructs a range from its two arguments
 
 
 
@@ -198,20 +205,20 @@ The following are pretty standard operators that work as you'd expect:
 
 ### Operator Precedence
 
-We haven't talked about all of the operators yet, but here is the list. 
+We haven't talked about all of the operators yet, but here is the list. Lower numbers have higher precedence
 
 1. `.` 
 2. `&`, `&&`, `*` (unary ref and deref), `include`
 3. `[]`, `!`, `?`, `-` (unary minus)
-4. `**`,
-5. `*`, `%`, `/`, `&` (bitwise and)
-6. `+`, `-`, `|` (bitwise or)
-7. `==`, `!=`, `>`, `<`, `<=`, `>=`
-8. `&&`
-9. `||`,
-10. `..`, `@`
-11. `|>`
-12. `as`, `is`
+4. `as`, `is`
+5. `**`,
+6. `*`, `%`, `/`, `&` (bitwise and)
+7. `+`, `-`, `|` (bitwise or)
+8. `==`, `!=`, `>`, `<`, `<=`, `>=`
+9. `&&`
+10. `||`,
+11. `..`, `@`
+12. `|>`
 13. `return`, `throw`
 14. `=`, `<-`
 
@@ -272,13 +279,11 @@ name
 ```
 The result is "Jill"
 
-A sort of exception to this is with classes. Object member variables are looked up after non-member variables are checked even though the member variables belong in the "smaller" scope. This is because member variables can be explicitly requested with `self` (which was needed to allow accessing member variables if a local function parameter shadowed it) and it seems easier to keep it this way instead of adding a way to explicitly request higher scope variables.
 
 Order of name lookup:
 1. Check the environment for an exact match
-2. Check environment for variables in the `self` *namespace*
-    * ex. if the name is `my_num`, look for `self::my_num`
-3. Check environment for variables in the `export` namespace
+2. Check environment for variables in the `export` *namespace*
+    * Variables are put in the `export` namespace when they are declared `pub`
 
 I'll refer to this as *free name* lookup to differentiate it with *dot name* lookup which we'll talk about later.
 
@@ -460,9 +465,11 @@ As you are probably noticing, the colon may be omitted for things that contain a
 ```BNF
 <sequence> ::= (<expr1> | <defn1>); (<expr2> | <defn2>); ... (<expr> | <defn>)
 ```
-Sequences are denoted with the `;` operator. Any expression or definition followed by a `;` indicates that there is a continuation. During evaluation, only the value produced by the final expression is returned. All earlier values are discarded unless an exception or evaluation error is produced or the `return` operator is used
+Sequences are denoted with the `;` operator. Any expression or definition followed by a `;` indicates that there is a continuation. During evaluation, only the value produced by the final expression is returned. All earlier values are discarded unless an exception or evaluation error is produced or the `return` operator is used.
 
-```Javascript
+It's important to note that the last line in a block **cannot** have a semicolon. This is because the semicolon tells the interpreter that more code is coming in the block. What is a block? Well, same as most coding languages. Basically any area where `<code>` can occur that has it's own scope. This includes the branches of a conditional, loops, functions, etc.
+
+```Rust
 100;
 50 + " Hello";
 let school = 'HHS';
@@ -473,6 +480,13 @@ school
 10 / 0;
 100
 // Divide by zero exception
+
+let var count = 0; //semi colon because there is a continuation
+for i in 0 .. 10 {
+    let num = i * 100 - i;
+    count = count + 1 //No semicolon since this is the last line in the block
+}
+// no semicolon since the for loop ends the block
 
 ```
 
@@ -487,7 +501,8 @@ An if or try block within a `let` definition would still require a semicolon bec
 Examples:
 ```Javascript
 if 10 + '' == '10':
-    0
+    0 
+    //One again note how this 0 does not have a ; since its the last line in the if branch's block
 else
     'No semicolon'
 
@@ -521,6 +536,8 @@ Single line comments with `//` or multiline comments with `/* */`
 <function> ::= fun <name> <arg1> <arg2> ... [-> <expr>] { <code> } |
                fun (<arg1> <arg2> ...) <expr>                     |
                fun (<arg1> <arg2> ...) { <code> }
+
+<arg> ::= [var] <name> | ([var] <name> : <expr>)
 ```
 
 A function can be defined by either a function definition or function expression (lambda). A function definition **must** have braces but a lambda optionally may not. If a lambda does not use braces, it **may only** contain an expression. Lambdas are unnamed.
@@ -580,20 +597,18 @@ lambda(2, 2)
 ```
 Results in 4096
 
-Variable capture occurs at parse time for free names. This is called *static capture*. However *dynamic capture* occurs at runtime for *dynamic namespaces* such as `self`. This allows a function to use the current value of a member of the object instance instead of the initial one defined at parse time. Thus, when a function is called, it looks at the referenced names and if any refer to names in the `self` namespace, these values are captured **by reference** at runtime. We'll discuss types and objects later, but here's an example.
+Variable capture occurs at parse time for free names. This is called *static capture*. However *dynamic capture* occurs at runtime for object member functions. For member functions, the name `self` is dynamically captured and is an object that stores the current state of the object.
 
 ```Rust
 struct Machine {
     def id = 0
 
     fun Machine id {
-        self::id <- id
-        //self::id is added as a reference
+        self.id = id
     }
 
     pub fun get_id {
-        *id
-        //dereference
+        self.id
     }
 }
 
@@ -712,9 +727,8 @@ Function definitions (not lambdas) can have a *postcondition expression* followi
 The postcondtion expression is evaluated in the function's captured environment. However a few new names are bound in the postcondition's environment.
 
 * `result` is always bound in the postcondition expression's environment to the result of the function
-* `number` is bound if the result is an integer or float
-* the name of the results type is bound
-    * ex. `int` will be a constant with the value of the function's result if that result is an integer
+* the name of the result's type is bound, and all meta-types that type satisfies
+    * ex. `int` will be a constant with the value of the function's result if that result is an integer. In this examples `number`, and `some` will also be bound to the same value.
 
 This means that means that a postcondtion containing the name `string` will cause an undeclared variable exception (and thus the postcondition will be violated) if the function actually produces a range.
 
@@ -804,9 +818,9 @@ meet(p)
 ```
 `valid_name` is only used in `meet`s PCE, but it is captured.
 
-### What about preconditions?
+### Precondition Annotations
 
-I have been thinking about having a `requires` clause or `when` clause to have the same property for preconditions. I am also getting tempted to have a similar precondition expression following a colon for each argument like a standard type annotation. However so far, I have decided against it. The reason is that a precondition is more easily checked whereas a postcondition would have to be checked by the caller or cause significantly added code. Preconditions can be checked with the `assert()` function.
+Let's take one look at postcondition expression again:
 
 Without PCE:
 ```Kotlin
@@ -860,6 +874,32 @@ fun gcd x y -> int >= 1 {
 }
 ```
 
+Let's look at precondition annotations. If a variable is enclosed in parenthesis, a precondition annotation can be placed in these parenthesis following a colon. The rules work exactly like a post condition expression, except, instead of always binding `result` along with any type variables, it also binds `arg`. The preconditions are checked one a value is bound to that parameter. Therefore, preconditions are checked during partial application (for the arguments specified)
+
+```Rust
+fun add (x: number) (y: number) -> number {
+    x + y
+}
+
+add(20, 30.0) +
+    try: add('Hello', " there") catch _: 0
+// 20 + 30.0 + 0
+```
+
+```Rust
+fun is_valid_param x {
+    x is int
+}
+
+fun add (x: (arg + arg)?) (y: is_valid_param(arg)) {
+    x + y
+}
+
+add("Hello ", 30) +
+    try: add("Hello", 54.0) catch _: 0
+// Hello 300
+```
+
 ## Return keyword
 
 `return` is not needed, but it can be used to cause code execution to stop early. Specifically what happens is it causes the value to bubble up from the AST during evaluation until it hits the first function node. Then the return value is converted into a normal value and is the result of the function. Basically, it works like `return` in C++ and Java and other imperative languages.
@@ -880,7 +920,7 @@ test_fun(10) + test_fun(8)
 
 References are kind of poorly named. Behind the scenes all references are **reference-counted shared smart pointers**. Thus, dead references aren't possible (ideally). There are two types of references, though they share the same type, mutable and immutable. An immutable reference is defined with `&` while mutable uses `&&`. All values can be references, including fully evaluated ones.
 
-Only variables can have mutable references taken. Basically, anything under a constant value cannot be mutated.
+Only variables can have mutable references taken. Basically, anything under a constant value cannot be mutated. When applying the reference operator to a literal, such as `10`, the operations creates a new reference that refers to its own copy of that value. This becomes akin to using the `new` operator in C++ or Java. If you take the reference of a name or another reference, the data will be shared.
 
 To derefence, use the `*` operator and to assign to the value of a reference, use the `<-` operator.
 
@@ -905,8 +945,58 @@ lst_view.contains('World') // true
 
 lst_view.push_back('Bye') //error, lst_view is immutable ref, even though it itself is a variable
 
-lst_view = &&lst; //ok since lst_view is a variable
+lst_view = &&lst; //ok since lst_view is a variable and lst is mutable itself
 ```
+
+```Rust
+let var lst = &&10; 
+//create a reference that owns a copy of the value 10
+lst <- 20;
+*lst + 10 //30
+//The reference of lst is now 20, obviously the value 10 is unaffected
+
+```
+
+## Weak References
+
+Weak references are not something you as a user must know about. They exist temporarily and ~~can~~ should [^1] never cause a dead reference error. They are automatically derefenced and their value's copied when used outside the limited area they can exist. For example, the result of the dot operator is a weak reference. This allows mutable values to be mutated with the `=` operator. However the second they are used for something else besides updating or lookup, (such as assignment), their values are copied.
+
+To keep the weak reference around as a reference (instead of copying), you can use the `&` or `&&` to promote it to a full reference.
+
+All non-reference specific operators which apply to references apply to weak references as well with the same semantics (ex. `.`, `()`, `[]`, etc.)
+
+```Rust
+let var obj = MyObj();
+
+obj.my_num = 3; //use weak reference to update the data
+5 + obj.my_num //8,  weak reference is copied
+
+let my_ref = &&obj.my_num; //weak reference promoted
+my_ref <- 20;
+5 + obj.my_num // 25
+
+obj.my_func(20) //function application on weak reference works like normal reference
+obj.child.child.next.get() // chain and function app of weak references
+
+```
+
+[^1]: I wouldn't be so naive and say the code is bug free
+
+
+## Reference Operators and Mutability
+
+* `<-` Is the reference update operator
+    * It changes the value behind a mutable reference
+    * It continually applies itself until a non-reference is found, and updates the value of that non-reference
+
+* `*` Is the dereference operator
+    * Like `<-`, it will continue to apply itself until a non-reference is found
+
+* `.`, `()`, `[]`, and `==` can be applied to references.
+    * When applied to references, they continue to apply themselves until a non reference is found
+    * then they apply themselves to the non-reference
+
+When dealing with chains of references/variables. Any single immutable value renders the entire chain immutable. For example, a mutable reference in an immutable object means that the reference is also immutable when attempted to be updated through the immutable object. In general, mutability rules enforce that an immutable value cannot have its data changing out from under it.
 
 ## Auto Dereferencing
 
@@ -943,9 +1033,10 @@ Ex. `val.func()` is the same as calling `func(&val)` or `func(&&val)`. The value
 The dot lookup evaluation order of `context.name` is as follows:
 1. If `context` is a reference, lookup `name` in the context of `*context`
     * This does not incur a copy
-2. If `context` is an object, lookup `name` in the dynamic `self` namespace of `context`
+2. If `context` is an object, lookup `name` in the dynamic `self` context
+    * If name is private and the current *calling context* does not have permission to access it (not being accessed from a *friend* object or the object itself) then name lookup fails
 3. Following *free-name* lookup rules, look for name `typeof(context)::name` and pass `context` as a reference to the first parameter of the function `name` if `name` is indeed a function
-    * Ex. `'test'.contains('es')` will search for `string::contains`
+    * Ex. `'test'.contains('es')` will search for `string::contains` and pass `&&'test'` as the first parameter
 4. Following free-name lookup rules, look for `name` and pass `context` by reference to the first parameter of the function `name` if `name` is a function
 
 To clarify, for steps 3 and 4, `name` should be a function because non-objects cannot have member values
@@ -961,7 +1052,10 @@ Here are the current standard free functions. Do note that all of them can be ap
     * If `expr` evaluates to a string, get the length in bytes
     * If `expr` evaluates to a tuple or string, gets the length of that tuple or string
     * If `expr` evaluates to a map, gets the amount of bindings in the map
-    * For objects or types, gets the amount of non-special (exclude the constructor) members of the type
+    * For types gets the amount of members for that type
+    * For objects:
+        * If the object or parent defines the `__len__` function, call that function
+        * Otherwise gets the amount of non-constructor members of the object
     * `unit` is 0
     * If `expr` evaluates to a range of integers, gets the difference between the range start and end
         * Note this means that the length can be 0
@@ -977,17 +1071,10 @@ Here are the current standard free functions. Do note that all of them can be ap
 * `cin_line()`
     * Reads a line from console input
     * Result is right-trimmed of whitespace
-* `template(path: <string>, bindings: <map>, [delim: <string>])`
-    * Reads the file located at `path`, processing any sapl code which is marked by `delim` and returns a string of the file read
-    * If `delim` is omitted, the default delimiter is "$$"
-        * `delim.len()` must be >= 2
-        * To escape the delimiter, put a backslash in front of each character in the delimiter
-    * sapl code between the delimiters will be evaluated, and the code is replaced by the pretty printed result of the execution
-    * sapl code is executed in its own environment which can be augmented using `bindings`
-        * For each k/v pair in `bindings`, add the pair to the environment where the key is the name and value in the map is the value in the environment
-    * the standard out for the environment of this template is the string that the function returns
-        * thus, for code executed by the `template` function, `cout` and `print` do different things
-    * Anything not enclosed by `delim` is simply returned as-is
+* `clone(<expr>)`
+    * Evaluates `<expr>` to a value and performs a deep copy
+    * If `<expr>` evaluates to an object, calls the `__clone__` function if it has been defined
+    * Note: if you access `clone` via dot syntax then the context object is passed by reference and thus clone will return a reference (still a deep copy)
 
 ```Javascript
 typeof((5, 3, 4)) //"tuple_3"
@@ -1003,6 +1090,24 @@ print('Hi', '. How are', ' you') //prints "Hi. How are you" without the quotes
 coutln("Please enter your name:");
 let response = cin_line()
 ```
+
+## Templates
+
+This is technically a standard library function but it warrants its own section.
+
+`template(path: <string>, bindings: <map>, [delim: <string>])`
+* Reads the file located at `path`, processing any sapl code which is marked by `delim` and returns a string of the file read
+* If `delim` is omitted, the default delimiter is "$$"
+    * `delim.len()` must be >= 2
+    * To escape the delimiter, put a backslash in front of each character in the delimiter
+* sapl code between the delimiters will be evaluated, and the code is replaced by the pretty printed result of the execution
+* sapl code is executed in its own environment which can be augmented using `bindings`
+    * For each k/v pair in `bindings`, add the pair to the environment where the key is the name and value in the map is the value in the environment
+* the standard out for the environment of this template is the string that the function returns
+    * thus, for code executed by the `template` function, `cout` and `print` do different things
+* Anything not enclosed by `delim` is simply returned as-is
+
+The usage for this is to allow keeping different languages separate. For example, data processing can occur in a sapl file and the results can be passed into an html file where the values are simply streamed in in the right locations. See template_test1.txt.
 
 ## Arrays
 
@@ -1131,6 +1236,50 @@ let _, _, name = (42, 'Corsair', 'Jim');
 name //"Jim"
 ```
 
+## Options
+
+Technically, every value is an option. I suppose that in a dynamically typed language, I avoid null pointers by simply re-branding the same idea as optionals and variants. As you've seen, you can get a `none` value (technically `unit`) with the `None` keyword. You can also force a value to be some by using the `Some(<expr>)` function.
+
+`Some()` evaluates the passed expression and wraps it in a single element tuple. This allows these values to be automatically unpacked in for loops and let defintions as if they were the value themselves. Why is this here? Well there are some functions, as we'll see shortly, that use `unit` as a special no data value. There may very well be `unit`s in your data and returning `unit` directly would make the library think that the end of data has been reached. To circumvent this you can wrap all data values in `Some()` which provides indirection so `None` can be returned as data.
+
+```Rust
+let x = Some(5);
+x // 5
+
+Some(None) is some //true
+None is some // false
+Some(5) is tuple_1 //true
+
+let var x = None;
+x = Some(None); //not a let definition, so not unpacked
+
+x == None // false
+x == Some(None) // true
+
+struct ExIter {
+    def var counter = 0
+
+    pub fun __next__ {
+        self.counter = self.counter + 1;
+        if self.counter < 11:
+            Some(None)
+            // return None as data
+        else:
+            None
+            // return None directly to indicate end of iteration
+    }
+}
+
+let var count = 0;
+for v in ExIter():
+    // v is automatically unpacked
+    if v is none:
+        count = count + 1
+
+count //10
+
+```
+
 ## Maps
 
 Maps are key value pairs. The key must be a string, and the value can be anything
@@ -1213,6 +1362,8 @@ Strings are utf8, however all operations operate on bytes
     * The index is the byte index
 * `<string>.split(<string>)`
     * Gets an array of strings split on the specified delimiter
+
+The following have yet to be implemented:
 * `<string>.find(<string>, [<int>])`
     * Gets the starting byte index of the passed needle
     * Will start looking after the passed integer if supplied
@@ -1310,7 +1461,8 @@ Imports are a little more refined. Instead of a file, it takes a name and conver
 
 The `as` keyword can be used to specify the namespace name to add all the public definitions to. If not specified, the fully qualified module name is used as the namespace. Finally, you can opt to not put the public definitions in a namespace by appending `::*` to the import module name.
 
-im_in_test.sapl
+im_in_test.sapl:
+
 ```Rust
 let const = 7;
 
@@ -1324,9 +1476,9 @@ pub fun extern_func a b {
 
 extern_func(?, 10)
 ```
+some other file:
 
-```Rust
-
+```C++
 let f = include "examples/im_in_test.sapl";
 extern_func(20, 10) + f(5) + const //38
 
@@ -1347,6 +1499,15 @@ examples::im_in_test::extern_func(10, 20) //23
 
 # Objects
 
+Objects and types are **the only** reference type. This means that the **only** way to create a new instance of an object is by the constructor or clone function. Otherwise, the same object is simply passed around by reference. Since types are completely immutable, knowing that they're a reference type is merely an implementation detail.
+
+```Rust
+let var obj1 = Obj();
+let var obj2 = obj1;
+obj2.name = 'SEV';
+obj1.name //'SEV'
+```
+
 The base object type is the `struct`. Structs may subtype `type`s. The difference between the two is that a `type` lacks a constructor and thus cannot be used on its own. Thus, it is an interface only. Type interfaces may provide default implementation of functions and default values of members but inheritors are free to override them.
 
 All member variables must be defined. Unlike Python or JS, they cannot just come into existence ad hoc. Definitions have the following syntax:
@@ -1357,10 +1518,12 @@ The access modifier (`pub`) applies to all definitions in a series while the mut
 
 No top-level line needs to end with a semicolon in an object or type (code in a function does), although you are more then welcome to use it.
 
-The constructor does not need `pub` before it, it is always public and always named the same as the object. If no constructor is defined, a default no-parameter one is created which sets all values to their specified initial values or `unit`.
+The constructor does not need `pub` before it, it is always public and always named the same as the object. If no constructor is defined, a default no-parameter one is created which sets all values to their specified initial values or `unit`. The initial values are set by copying the initial value to the new instance object. Therefore, if an initial value is a reference, the data behind that reference is **shared** for all instances of an object.
 
 
-Member variables are captured at runtime to the scopes of member function, and captured *by reference*. They are added to the `self` namespace. Lookup into the `self` namespace has lower priority than statically captured values because `self::` can be used to explicitly request a lookup into the namespace. Note that all members are **references**. Thus, to use member values' you must derefence them.
+Each function gets a `self` object which refers to itself. `self` is an implicit first parameter to **all** member functions. You need not declare this parameter in the argument list, but it is always there. This is because member functions are accessed via dot-syntax, and this passes the context object (left side of `.`) as a reference to the function.
+
+Thus, there is **no** way to access member variables except through the `self` object (or any other instance object)
 
 
 Examples
@@ -1385,24 +1548,24 @@ struct Person {
     pub def name, var age = 0
 
     fun Person name {
-        self::name <- name;
-        ssn <- 156
+        self.name <- name;
+        self.ssn <- 156
     }
 
     pub fun greet {
-        "Hello! My name is " + *name
-        + " and I am " + *age
+        "Hello! My name is " + self.name
+        + " and I am " + self.age
         + " years old."
     }
 
     pub fun verify test_ssn {
-        *ssn == test_ssn
+        self.ssn == test_ssn
         //ssn is added to function scope as self::ssn
     }
 }
 
 let jane = Person('Jane'); //invoke constructor
-[jane.greet(), jane.verify(156), 10 |> jane.verify, *jane.name]
+[jane.greet(), jane.verify(156), 10 |> jane.verify, jane.name]
 //['Hello! My name is Jane and I am 0 years old.', true, false, 'Jane']
 //notice the get the value of name, it had to be dereferenced
 
@@ -1410,11 +1573,11 @@ struct Animal {
     def var species
 
     fun Animal species {
-        self::species <- species
+        self.species <- species
     }
 
     pub fun mutate species {
-        self::species <- species
+        self.species <- species
     }
 }
 
@@ -1464,26 +1627,39 @@ struct Person {
     def secret = 0
 
     fun get_password {
-        secret
+        self.secret
     }
 }
 
 let adam = Person();
-*adam.secret
+adam.secret
 adam.get_password()
 //ERROR, both secret and get_password are private
 ```
 
+## Calling Contexts and Friends
+
+A *calling context* is the context of where an object is being used. It's either in a public, constructor, or self context and is intrinsic to the **copy** of the object reference being used. A constructor context is given to the `self` object passed to the constructor, this allows all variables, public or private, mutable or immutable to be available form read/write access. The self context makes all members readable, but only mutable ones writable. A public context allows only public members to be readable and respects the mutability of each member.
+
+An object or type may declare friends with the `friend` keyword. 
+
+`<friends> ::= friend <name1>, friend <name2>, ...`
+
+Invocation of the object in a context of a friend object may access private data. Works exactly like C++ friends
+
+
 ## Subtyping
 
-Subtyping works by copying all the members of the type to the object. Thus, if the super type has a member reference, all instances of all subtypes share that one data value. Multiple subtyping is allowed by using a comma seperated list of types. If name collisions occur, the last specified super type takes priority
+Subtyping works by copying all the members **and friends** of the type to the object. Thus, if the super type has a member reference, all instances of all subtypes share that one data value. Multiple subtyping is allowed by using a comma seperated list of types. If name collisions occur, the last specified super type takes priority.
+
+Type methods are also passed a `self` object. However this `self` will not refer to the type but rather an instance of an object that subtypes the type.
 
 ```Rust
 type Person {
     pub def name, age
 
     pub fun speak {
-        "Hello. I am " + *name 
+        "Hello. I am " + self.name 
     }
 }
 
@@ -1492,8 +1668,8 @@ let my_type = Person; //type alias
 struct Baby : Person {
     //notice age and name not defined in struct
     fun Baby name {
-        age <- 0;
-        self::name <- name
+        self.age = 0;
+        self.name = name
     }
 
     pub fun speak {
@@ -1504,27 +1680,27 @@ struct Baby : Person {
 
 struct Child : my_type {
     fun Child name {
-        age <- 10;
-        self::name <- name
+        self.age = 10;
+        self.name <- name
     }
 }
 
 let little_jimmy = Baby('Jimmy');
 let bobby = Child('Bobby');
-[little_jimmy.speak(), *little_jimmy.age, bobby.speak(), *bobby.age]
+[little_jimmy.speak(), little_jimmy.age, bobby.speak(), bobby.age]
 //['Goo-goo-ga-ga', 0, 'Hello. I am Bobby', 10]
 
 type Counter {
     def var count = &&0
 
     fun inc {
-        count <- *count + 1
+        self.count <- *self.count + 1
         // although count can be thought of as a reference to a reference
         // only one dereference is necessary
     }
 
     pub fun get_count {
-        *count
+        *self.count
     }
 }
 
@@ -1533,13 +1709,14 @@ struct Obj : Counter {
     pub def var a_num
 
     fun Obj {
-        inc();
-        do_it()
+        self.inc();
+        self.do_it()
     }
 
     fun do_it {
         fun call_it {
-            a_num <- 10
+            self.a_num = 10
+            // self is statically captured from the outer function `do_it`
         }
 
         call_it()
@@ -1550,8 +1727,235 @@ struct Obj : Counter {
 Obj();
 Obj();
 let a = Obj();
-(a.get_count(), *a.a_num)
+(a.get_count(), a.a_num)
 //(3, 10)
+```
+
+## Special Functions
+
+Special functions are denoted by preceding and trailing double underscores. As of now, they are like the constructor in the respect that they are always public. However, calling them directly requires the correct calling context.
+
+* `__len__ : self -> int`
+    * Overrides the behavior of the built-in `len()` function
+    * Expected to return an integer
+    * Thus `__len__` can be used as a free or bound function
+
+* `__call__ : var self, ... -> a`
+    * Overrides the behavior when a object is called like a function (ie. use the `()` operators on the object)
+    * The arguments passed between the `()` are passed directly to `__call__`
+
+* `__index__ : self, int -> a`
+    * Overrides the behavior when an object is indexed with the `[]` operator
+    * Takes a single argument which is passed between the brackets
+
+* `__next__ : var self -> a`
+    * Allows an object to be iterated over in a for loop
+    * The data returned by `__next__` is considered to be the data yielded by the iterator
+    * Returning `None` (or any `unit` value) from `__next__` stops the iteration
+
+* `__iter__ : self -> iter`
+    * Returns an iterator to the object. An iterator must override the `__next__` method or be iterable such as an array, map, or range
+    * Can be used anywhere `__next__` is expected
+
+* `__clone__ : self -> self`
+    * Similar to `__len__`
+    * Overrides the behavior of `clone()`
+    * The purpose of overriding clone is to allow deep copying of reference members
+
+```Rust
+struct Ring {
+    def var ring = [], max_size, var idx = 0
+
+    pub fun Ring size {
+        self.max_size = size
+    }
+
+    pub fun __len__ {
+        self.ring.len()
+    }
+
+    pub fun __index__ i {
+        (self.ring)[i % len(self)]
+    }
+
+    pub fun push_back x {
+        if self.ring.len() > self.idx:
+            self.ring.set(self.idx, x)
+        else:
+            self.ring.push_back(x)
+        self.idx = self.idx + 1;
+        if self.idx >= self.max_size:
+            self.idx = 0
+
+    }
+
+    pub fun __call__ {
+        self.ring
+    }
+
+}
+
+let var ring = Ring(4);
+ring.push_back(10);
+ring.push_back(9);
+ring.push_back(8);
+ring.push_back(7);
+ring.push_back(6);
+(ring[0], ring(), ring.len())
+//(6, [6, 9, 8, 7], 4)
+
+```
+
+
+```Rust
+struct Rope {
+    def l1, l2, var idx = 0
+
+    fun Rope l1 l2 {
+        self.l1 = l1;
+        self.l2 = l2
+    }
+
+    fun __next__ {
+        let res = 
+        if self.idx < self.l1.len() + self.l2.len():
+            if self.idx >= self.l1.len():
+                (self.l2)[self.idx - self.l1.len()]
+            else:
+                (self.l1)[self.idx]
+        else:
+            None;
+        self.idx = self.idx + 1;
+        res
+    }
+
+}
+let r = Rope([5, 4], [3, 2, 1]);
+let var buf = [];
+for i in r {
+    buf.push_back(i)
+}
+buf //[5, 4, 3, 2, 1]
+```
+
+```Rust
+struct ListIter {
+    def var nx, var val
+
+    fun ListIter start {
+        if start is List:
+            self.val = Some(start.val);
+            // assignment: doesn't unpack
+            self.nx = start.next
+        else:
+            throw "Invalid argument passed to ListIter"
+    }
+
+    pub fun __next__ {
+        let val = self.val;
+        if self.nx is some:
+            self.val = Some(self.nx.val);
+            self.nx = self.nx.next
+        else:
+            self.val = None
+        val
+    }
+}
+struct List {
+    pub def var val
+    def var next
+    friend ListIter
+    //ListIter is a friend, can access private internals
+
+    fun List val {
+        self.next = None;
+        if val is array && val.len() >= 1:
+            self.val = val[0];
+            for idx in 1 .. val.len():
+                self.push_back(val[idx])
+        else:
+            self.val = val
+        
+    }
+
+    pub fun push_back x {
+        let var n = &&self.next;
+        while *n is some {
+            n = &&n.next
+        }
+        n <- List(x)
+    }
+
+    pub fun __len__ {
+        let var n = &self.next;
+        let var count = 1;
+        while *n is some {
+            n = &n.next;
+            count = count + 1
+        }
+        count
+    }
+
+    pub fun contains x {
+        if x == self.val: true
+        else if self.next is some:
+            self.next.contains(x)
+        else:
+            false
+    }
+
+    pub fun __iter__ {
+        ListIter(self)
+    }
+}
+let lst = List([10, 20, 30]);
+let tup = (lst.contains(10), lst.len(), lst.contains(50));
+
+let var sum = 0;
+for e in lst {
+    // e is the unpacked Some()
+    sum = sum + e
+}
+(tup, sum) //((true, 3, false), 60)
+
+```
+
+
+```Rust
+struct Obj1 {
+    pub def var a, var b
+
+    fun Obj1 a b { 
+        let var a = a;
+        self.a = &&a;
+        self.b = b
+    }
+
+    fun __clone__ {
+        Obj1(*self.a, self.b)
+    }
+}
+
+struct Obj2 {
+    pub def var a, var b
+
+    fun Obj2 a b { 
+        let var a = a;
+        self.a = &&a;
+        self.b = b
+    }
+}
+
+let var a1 = Obj1(10, 20);
+let var b1 = a1.clone();
+a1.a <- 20;
+let test1 = *b1.a; //10
+
+let var a2 = Obj2(10, 20);
+let var b2 = a2.clone();
+b2.a <- 20;
+*a2.a + test1
+//30
 ```
 
 # TODO
@@ -1563,6 +1967,6 @@ let a = Obj();
 - [x] Templates? (not in the sense of C++, but rather similar to BLAZOR in HTML)
 - [x] Standard library functions (more functions for types, more provided functions) WIP
 - [ ] Streams?
-- [ ] Iterators?
+- [x] Iterators? (Partial)
 - [ ] ~~Try to avoid feature creep~~ **FAILED**
 
