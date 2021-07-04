@@ -76,8 +76,10 @@ let _ = 10;
     * function
     * range
     * *object*
-        * `TypeName`
-            * Structs and Types are their own type
+        * *`TypeName`*
+            * `StructName`
+            * Structs are their own type name
+            * Types (interfaces, denoted with the `type` keyword in sapl) are their own meta type name
     * ref
 * *none*
     * unit

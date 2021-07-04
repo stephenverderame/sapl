@@ -1752,6 +1752,9 @@ mod tests {
         assert_eval_eq(r#"'Hello\n'"#, Vl(Values::Str("Hello\n".to_owned())));
         assert_eval_eq(r#"'\tHello\nGoodbye\n'"#, Vl(Values::Str("\tHello\nGoodbye\n".to_owned())));
         assert_eval_eq(r#"'\\n'"#, Vl(Values::Str("\\n".to_owned())));
+        assert_eval_eq(r#"'\x30'"#, Vl(Values::Str("0".to_owned())));
+        assert_eval_eq(r#"'I\'m good!'"#, Vl(Values::Str("I'm good!".to_owned())));
+        assert_eval_eq(r#"'\x1b[31mTest\x1b[0m'"#, Vl(Values::Str("\x1b[31mTest\x1b[0m".to_owned())));
     }
 
     #[test]

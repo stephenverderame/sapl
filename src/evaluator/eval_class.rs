@@ -41,6 +41,7 @@ pub struct Class {
     pub members: HashMap<String, Member>,
     pub dtor: Option<Values>,
     pub friends: Vec<String>,
+    pub parents: Vec<String>,
 
 }
 
@@ -82,6 +83,7 @@ pub fn eval_type_def(interface: &SaplStruct, scope: &mut impl Environment, publi
             members: mems,
             dtor: None,
             friends: friends,
+            parents: interface.parents.clone(),
         }
     )), false, public);
     Vl(Values::Unit)
@@ -216,6 +218,7 @@ fn get_class_ctor(mems: HashMap<String, Member>, class: &SaplStruct, scope: &mut
     let name = class.name.clone();
     let rust_ctor = Rc::new(RefCell::new(Values::Unit));
     let rc = rust_ctor.clone();
+    let parents = class.parents.clone();
     let func = move |args: Vec<Values>| -> Res {
         let mems = mems.clone();
         let ctor = ctor.clone();
@@ -226,6 +229,7 @@ fn get_class_ctor(mems: HashMap<String, Member>, class: &SaplStruct, scope: &mut
                 members: process_fn_mem(mems, rc.clone(), &name.clone()),
                 dtor: None,
                 friends: friends.clone(),
+                parents: parents.clone(),
             }
         ));
         if let Some(Values::Func(ps, body, fn_scope, pce)) = ctor {

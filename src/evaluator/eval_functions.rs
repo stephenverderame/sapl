@@ -365,8 +365,20 @@ fn add_type_variables_to_scope(val: &Rc<RefCell<Values>>, scope: &mut impl Envir
                 scope.add_direct("number".to_owned(), val.clone(), false),
             Values::Tuple(_) =>
                 scope.add_direct("tuple".to_owned(), val.clone(), false),
-            Values::Object(..) | Values::Type(_) => 
-                scope.add_direct("object".to_owned(), val.clone(), false),
+            Values::Type(class) => {
+                scope.add_direct("object".to_owned(), val.clone(), false);
+                let Class {parents, ..} = &**class;
+                for p in parents {
+                    scope.add_direct(p.clone(), val.clone(), false);
+                }
+            },
+            Values::Object(class, ..) => {
+                scope.add_direct("object".to_owned(), val.clone(), false);
+                let Class {parents, ..} = &*class.borrow();
+                for p in parents {
+                    scope.add_direct(p.clone(), val.clone(), false);
+                }
+            }
             _ => (),
         }
     }

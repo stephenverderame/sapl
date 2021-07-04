@@ -624,6 +624,16 @@ fn perform_type_check(left: &Ast, is_type: &Ast, scope: &mut impl Environment) -
             (Vl(x), "some") if x != Values::Unit =>  Vl(Values::Bool(true)),
             (Vl(Values::Int(_)), "number") | (Vl(Values::Float(_)), "number") =>
                 Vl(Values::Bool(true)),
+            (Vl(Values::Object(obj, _)), typ) => {
+                let Class {parents, ..} = &*obj.borrow();
+                if typ == "object" ||
+                    parents.iter().find(|e| {
+                        *e == typ
+                    }).is_some() {
+                        Vl(Values::Bool(true))
+                    }
+                else { Vl(Values::Bool(false)) }
+            },
             (Vl(_), _) =>  Vl(Values::Bool(false)),
             (e, _) => e,
         }

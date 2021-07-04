@@ -100,6 +100,15 @@ impl TokenizerFSM {
         b.push(b'\n');
         b
     }
+
+
+    /// True if the last character read was a backslash
+    fn is_input_escaped(&self) -> bool {
+        let bytes = self.input.as_bytes();
+        if bytes.len() >= 1 {
+            bytes[bytes.len() - 1] == b'\\'
+        } else { false }
+    }
     
     /// Gets a `(next_state, token)` tuple that occurs from
     /// reading `input` from the current FSM state
@@ -123,7 +132,7 @@ impl TokenizerFSM {
             
             //lex strings
             //must be before everything else
-            TokenizerStates::ReadString(delim) if input == *delim => 
+            TokenizerStates::ReadString(delim) if input == *delim && !self.is_input_escaped() => 
                 (TokenizerStates::Init, self.done_parse_token()),
             TokenizerStates::ReadString(_) => (self.state, None), 
             _ if input == b'\'' || input == b'"' => 
@@ -282,7 +291,7 @@ impl TokenizerFSM {
     fn append_char_to_input(&mut self, c: u8, next_state: TokenizerStates) {
         match (self.state, next_state) {
             (TokenizerStates::ReadString(delim), _) |
-            (_, TokenizerStates::ReadString(delim)) if delim == c => (),
+            (_, TokenizerStates::ReadString(delim)) if delim == c && !self.is_input_escaped() => (),
             (TokenizerStates::ReadString(_), _) |
             (_, TokenizerStates::ReadString(_)) =>
                 self.input.push(c as char),
@@ -362,12 +371,19 @@ impl TokenizerFSM {
 
     fn str_from_escape_codes(string: String) -> Option<Tokens> {
         use regex::Regex;
+        use regex::Captures;
+        use std::convert::TryFrom;
+        println!("Got {}", string);
         let string = Regex::new(r#"(\b|^|\s)\\t"#).unwrap().replace_all(&string, "\t");
         let string = Regex::new(r#"(\b|^|\s)\\r"#).unwrap().replace_all(&string, "\r");
         let string = Regex::new(r#"(\b|^|\s)\\n"#).unwrap().replace_all(&string, "\n");
         let string = Regex::new(r#"\\\\"#).unwrap().replace_all(&string, "\\");
         let string = Regex::new(r#"\\'"#).unwrap().replace_all(&string, "'");
         let string = Regex::new(r#"\\""#).unwrap().replace_all(&string, "\"");
+        let string = Regex::new(r#"\\x([a-fA-F0-9]+)"#).unwrap().replace_all(&string, |caps: &Captures| {
+            let val = u32::from_str_radix(&caps[1], 16).unwrap();
+            format!("{}", char::try_from(val).unwrap())
+        });
         Some(Tokens::TString(string.to_string()))
     }
 
