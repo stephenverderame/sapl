@@ -1,14 +1,16 @@
+use super::environment::{Environment, Scope};
+use super::eval_class::Class;
+use crate::parser::Ast;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt;
 use std::rc::{Rc, Weak};
-use std::cell::RefCell;
-use crate::parser::Ast;
-use std::collections::HashMap;
-use super::environment::{Scope, Environment};
-use super::eval_class::Class;
 
 #[derive(Clone, PartialEq, Copy)]
 pub enum CallingContext {
-    Constructor, SelfCall, Public
+    Constructor,
+    SelfCall,
+    Public,
 }
 
 #[derive(Clone)]
@@ -18,11 +20,16 @@ pub enum Values {
     Str(String),
     Unit,
     Bool(bool),
-    Func(Vec<(String, bool, Option<Ast>)>, Ast, Rc<RefCell<Scope>>, Option<Ast>),
+    Func(
+        Vec<(String, bool, Option<Ast>)>,
+        Ast,
+        Rc<RefCell<Scope>>,
+        Option<Ast>,
+    ),
     Array(Box<Vec<Values>>),
     Tuple(Box<Vec<Values>>),
     Range(Box<Values>, Box<Values>),
-    Map(Box<HashMap<String, Values>>),
+    Map(HashMap<Values, Values>),
     Placeholder,
     Ref(Rc<RefCell<Values>>, bool),
     WeakRef(Weak<RefCell<Values>>, bool), //Invariant: weak ref must always be valid
@@ -41,6 +48,21 @@ pub enum Res {
 
 use Res::*;
 
+fn map_eq(a: &HashMap<Values, Values>, b: &HashMap<Values, Values>) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    for (k, v) in a {
+        if !b.contains_key(k) {
+            return false;
+        }
+        if b[k] != *v {
+            return false;
+        }
+    }
+    true
+}
+
 impl PartialEq for Values {
     fn eq(&self, other: &Values) -> bool {
         use Values::*;
@@ -50,11 +72,10 @@ impl PartialEq for Values {
             (Bool(a), Bool(b)) => a == b,
             (Str(a), Str(b)) => a == b,
             (Array(a), Array(b)) => a == b,
-            (Map(a), Map(b)) => a == b,
+            (Map(a), Map(b)) => map_eq(a, b),
             (Ref(a, c), Ref(b, d)) => a == b && c == d,
             (Tuple(a), Tuple(b)) => a == b,
-            (Func(a, b, c, d), Func(x, y, z, w)) => 
-                a == x && b == y && c == z && d == w,
+            (Func(a, b, c, d), Func(x, y, z, w)) => a == x && b == y && c == z && d == w,
             (Range(a, b), Range(c, d)) => a == c && b == d,
             (Unit, Unit) => true,
             (Placeholder, Placeholder) => true,
@@ -64,6 +85,8 @@ impl PartialEq for Values {
         }
     }
 }
+
+impl Eq for Values {}
 
 impl std::fmt::Debug for Values {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -81,7 +104,7 @@ impl std::fmt::Debug for Values {
             WeakRef(x, _) => write!(f, "weak {:?}", &*x.upgrade().unwrap().borrow()),
             Placeholder => write!(f, "<placeholder>"),
             Unit => write!(f, "<unit>"),
-            Range(a, b) => write!(f, "{:?}..{:?}", a, b), 
+            Range(a, b) => write!(f, "{:?}..{:?}", a, b),
             Object(a, _) => write!(f, "Object {{ {:?} }}", &*a.borrow()),
             Type(a) => write!(f, "Type {{ {:?} }}", a),
         }
@@ -103,15 +126,21 @@ impl std::fmt::Display for Values {
             Ref(x, _) => write!(f, "ref {}", &*x.borrow()),
             WeakRef(x, _) => write!(f, "weak {:?}", &*x.upgrade().unwrap().borrow()),
             Placeholder | Unit => Ok(()),
-            Range(a, b) => write!(f, "{}..{}", &*a, &*b), 
+            Range(a, b) => write!(f, "{}..{}", &*a, &*b),
             Object(a, _) => write!(f, "Object {{ {:?} }}", &*a.borrow()),
             Type(a) => write!(f, "Type {{ {:?} }}", a),
         }
     }
 }
 
+impl std::hash::Hash for Values {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        core::mem::discriminant(self).hash(state);
+    }
+}
+
 /// Converts a value `b` into the closest boole equivalent
-/// Non-empty strings and arrays, true booleans, non zero ints and floats 
+/// Non-empty strings and arrays, true booleans, non zero ints and floats
 /// and ranges with different first and second elements
 /// become true
 /// Everything else becomes false
@@ -124,17 +153,22 @@ pub fn to_booly(b: &Res) -> Result<bool, String> {
         Vl(Values::Array(x)) if !x.is_empty() => Ok(true),
         Vl(Values::Map(x)) if !x.is_empty() => Ok(true),
         Vl(Values::Range(a, b)) if a != b => Ok(true),
-        Vl(Values::Func(..)) | Vl(Values::Tuple(..))
-        | Vl(Values::Object(..)) 
-        | Vl(Values::Type(_)) => Ok(true),        
+        Vl(Values::Func(..))
+        | Vl(Values::Tuple(..))
+        | Vl(Values::Object(..))
+        | Vl(Values::Type(_)) => Ok(true),
         Vl(_) => Ok(false),
         Bad(e) => Err(e.to_string()),
-       e => Err(format!("Return/exn value cannot be converted to bool: got {:?}", e)),
+        e => Err(format!(
+            "Return/exn value cannot be converted to bool: got {:?}",
+            e
+        )),
     }
 }
 
 pub fn type_conversion(val: Values, as_type: &String) -> Res {
     use super::exn::*;
+    use std::convert::TryInto;
     match (val, &as_type[..]) {
         (Values::Func(..), _) | (Values::RustFunc(..), _) => str_exn("Cannot cast function types"),
         (x, y) if super::std_sapl::type_of(&x) == y => Vl(x),
@@ -162,20 +196,18 @@ pub fn type_conversion(val: Values, as_type: &String) -> Res {
         (Values::Map(map), "array") => {
             let mut array = Vec::<Values>::new();
             for (k, v) in map.into_iter() {
-                let tup = Values::Tuple(Box::new(
-                    vec![Values::Str(k), v]
-                ));
+                let tup = Values::Tuple(Box::new(vec![k, v]));
                 array.push(tup);
             }
             Vl(Values::Array(Box::new(array)))
-        },
+        }
         (Values::Array(arr), "map") => {
-            let mut map = HashMap::<String, Values>::new();
-            for i in 0 .. arr.len() {
-                map.insert(format!("{}", i), arr[i].clone());
+            let mut map = HashMap::<Values, Values>::new();
+            for i in 0..arr.len() {
+                map.insert(Values::Int(i.try_into().unwrap()), arr[i].clone());
             }
-            Vl(Values::Map(Box::new(map)))
-        },
+            Vl(Values::Map(map))
+        }
         (vl, typ) => str_exn(&format!("Unknown type conversion from {:?} to {:?}", vl, typ)[..]),
     }
 }
@@ -185,16 +217,15 @@ pub fn type_conversion(val: Values, as_type: &String) -> Res {
 /// Returns the return of `closure` if `closure` returns `Some`
 /// If `closure` returns `None`, keeps looking through `args`
 /// If any argument evaluates to a non value, returns that non-value
-pub fn eval_args<F>(args: &Vec<Box<Ast>>, scope: &mut impl Environment, mut closure: F) -> Res 
-    where F : FnMut(Values) -> Option<Res> 
+pub fn eval_args<F>(args: &Vec<Box<Ast>>, scope: &mut impl Environment, mut closure: F) -> Res
+where
+    F: FnMut(Values) -> Option<Res>,
 {
     for arg in args {
         match super::eval(arg, scope) {
-            Vl(val) => {
-                match closure(val) {
-                    Some(ret) => return ret,
-                    None => (),
-                }
+            Vl(val) => match closure(val) {
+                Some(ret) => return ret,
+                None => (),
             },
             e => return e,
         }

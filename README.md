@@ -1550,8 +1550,8 @@ struct Person {
     pub def name, var age = 0
 
     fun Person name {
-        self.name <- name;
-        self.ssn <- 156
+        self.name = name;
+        self.ssn = 156
     }
 
     pub fun greet {
@@ -1575,11 +1575,11 @@ struct Animal {
     def var species
 
     fun Animal species {
-        self.species <- species
+        self.species = species
     }
 
     pub fun mutate species {
-        self.species <- species
+        self.species = species
     }
 }
 
@@ -1683,7 +1683,7 @@ struct Baby : Person {
 struct Child : my_type {
     fun Child name {
         self.age = 10;
-        self.name <- name
+        self.name = name
     }
 }
 

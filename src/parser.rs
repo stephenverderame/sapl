@@ -7,21 +7,45 @@ use parse_control::*;
 mod parse_func;
 use parse_func::*;
 mod parse_class;
-use parse_class::*;
 pub use parse_class::SaplStruct;
+use parse_class::*;
 
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub enum Op {
-    Plus, Mult, Div, Mod, Sub, Exp,
-    Land, Lor, And, Or, Lt, Gt, Eq,
-    Neq, Leq, Geq, Range, Not,
-    Pipeline, Dot, Neg, Concat,
+    Plus,
+    Mult,
+    Div,
+    Mod,
+    Sub,
+    Exp,
+    Land,
+    Lor,
+    And,
+    Or,
+    Lt,
+    Gt,
+    Eq,
+    Neq,
+    Leq,
+    Geq,
+    Range,
+    Not,
+    Pipeline,
+    Dot,
+    Neg,
+    Concat,
     AsBool,
     Index,
-    Return, Throw,
-    Assign, Update,
-    Ref, Deref, MutRef,
-    As, Is, Include,
+    Return,
+    Throw,
+    Assign,
+    Update,
+    Ref,
+    Deref,
+    MutRef,
+    As,
+    Is,
+    Include,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -35,12 +59,18 @@ pub enum Ast {
     Seq(Vec<Box<Ast>>),
     Let(Vec<(String, bool)>, Box<Ast>),
     Name(String),
-    Func(String, Vec<(String, bool, Option<Box<Ast>>)>, Box<Ast>, Option<Box<Ast>>),
+    Func(
+        String,
+        Vec<(String, bool, Option<Box<Ast>>)>,
+        Box<Ast>,
+        Option<Box<Ast>>,
+    ),
     Lambda(Vec<(String, bool, Option<Box<Ast>>)>, Box<Ast>),
     FnApply(Box<Ast>, Vec<Box<Ast>>),
     Array(Vec<Box<Ast>>),
     Tuple(Vec<Box<Ast>>),
-    Placeholder, None,
+    Placeholder,
+    None,
     Uop(Box<Ast>, Op),
     Map(Box<Vec<(Ast, Ast)>>),
     Try(Box<Ast>, String, Box<Ast>),
@@ -60,10 +90,8 @@ pub fn parse(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
 /// Parses a single expression or definition
 fn parse_single(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
     match stream.front() {
-        Some(x) if tok_is_defn(&x) =>
-            parse_defn(stream),
-        Some(x) if tok_is_expr(&x) => 
-            parse_expr(stream, None),
+        Some(x) if tok_is_defn(&x) => parse_defn(stream),
+        Some(x) if tok_is_expr(&x) => parse_expr(stream, None),
         x => Err(format!("Expected expression, got {:?}", x)),
     }
 }
@@ -71,12 +99,15 @@ fn parse_single(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
 /// True if `tok` can start an expression
 fn tok_is_expr(tok: &Tokens) -> bool {
     match tok {
-        Tokens::LParen | Tokens::If 
-        | Tokens::Name(_) | Tokens::OpQ 
-        | Tokens::LBracket | Tokens::OpNegate 
-        | Tokens::LBrace | Tokens::Try 
-        | Tokens::Fun =>
-        true,
+        Tokens::LParen
+        | Tokens::If
+        | Tokens::Name(_)
+        | Tokens::OpQ
+        | Tokens::LBracket
+        | Tokens::OpNegate
+        | Tokens::LBrace
+        | Tokens::Try
+        | Tokens::Fun => true,
         x if tok_is_pre_uop(x) => true,
         x if tok_is_val(x) => true,
         _ => false,
@@ -85,10 +116,14 @@ fn tok_is_expr(tok: &Tokens) -> bool {
 
 fn tok_is_defn(tok: &Tokens) -> bool {
     match *tok {
-        Tokens::Let | Tokens::Fun | 
-        Tokens::For | Tokens::While |
-        Tokens::Struct | Tokens::Type |
-        Tokens::Pub | Tokens::Import => true,
+        Tokens::Let
+        | Tokens::Fun
+        | Tokens::For
+        | Tokens::While
+        | Tokens::Struct
+        | Tokens::Type
+        | Tokens::Pub
+        | Tokens::Import => true,
         _ => false,
     }
 }
@@ -107,22 +142,25 @@ fn tok_to_val(tok: Tokens) -> Result<Ast, String> {
     }
 }
 
-/// Parses an arithmetic expression 
+/// Parses an arithmetic expression
 /// If it cannot parse the next token sequence, an error is returned and the
 /// stream is unchanged
 /// `parent_precedence` is the precedence of the parent Bop or `None` if this is not a sub-expression of
 /// a bop
-fn parse_expr(stream: &mut VecDeque<Tokens>, parent_precedence: Option<i32>) -> Result<Ast, String> {
+fn parse_expr(
+    stream: &mut VecDeque<Tokens>,
+    parent_precedence: Option<i32>,
+) -> Result<Ast, String> {
     let left = parse_expr_left(stream);
-    if left.is_err() { return left; }
+    if left.is_err() {
+        return left;
+    }
     match stream.front() {
-        Some(x) if tok_is_bop(x) =>
-            parse_bop(left.unwrap(), parent_precedence, stream),
-        Some(x) if tok_is_post_uop(x) =>
-            match parse_post_uop(left.unwrap(), stream) {
-                Ok(ast) => parse_bop(ast, parent_precedence, stream),
-                e => e,
-            },
+        Some(x) if tok_is_bop(x) => parse_bop(left.unwrap(), parent_precedence, stream),
+        Some(x) if tok_is_post_uop(x) => match parse_post_uop(left.unwrap(), stream) {
+            Ok(ast) => parse_bop(ast, parent_precedence, stream),
+            e => e,
+        },
         _ => left,
     }
 }
@@ -138,7 +176,7 @@ fn parse_expr_left(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
         Some(Tokens::OpQ) => {
             consume(stream);
             Ok(Ast::Placeholder)
-        },
+        }
         Some(Tokens::LBracket) => parse_array(consume(stream)),
         Some(Tokens::LBrace) => parse_map(consume(stream)),
         Some(Tokens::Fun) => parse_func(consume(stream)),
@@ -151,8 +189,7 @@ fn parse_expr_left(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
 
 /// Parses the (E) productions
 /// Requires `(` has already been consumed
-fn parse_paren_expr(stream: &mut VecDeque<Tokens>) -> Result<Ast, String>
-{
+fn parse_paren_expr(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
     let expr = parse_expr(stream, None);
     if let Ok(ast) = expr {
         match stream.pop_front() {
@@ -160,7 +197,9 @@ fn parse_paren_expr(stream: &mut VecDeque<Tokens>) -> Result<Ast, String>
             Some(Tokens::Comma) => parse_tuple(ast, stream),
             _ => Err("Missing closing parenthesis".to_owned()),
         }
-    } else {expr}
+    } else {
+        expr
+    }
 }
 
 /// Parses a block that can start with a colon or be wrapped in braces
@@ -168,13 +207,17 @@ fn parse_paren_expr(stream: &mut VecDeque<Tokens>) -> Result<Ast, String>
 /// there are no braces
 /// `can_omit` - set to true if the block can omit : or {}
 /// Requires the block begins with the first token in `stream`.
-fn parse_block(stream: &mut VecDeque<Tokens>, 
-    only_expr_wo_brace: bool, can_omit : bool) -> Result<Ast, String> 
-{
+fn parse_block(
+    stream: &mut VecDeque<Tokens>,
+    only_expr_wo_brace: bool,
+    can_omit: bool,
+) -> Result<Ast, String> {
     let is_brace = stream.front() == Some(&Tokens::LBrace);
     let is_colon = stream.front() == Some(&Tokens::Colon);
     if is_brace || is_colon || can_omit {
-        if is_brace || is_colon { consume(stream); }
+        if is_brace || is_colon {
+            consume(stream);
+        }
         let body = if only_expr_wo_brace && !is_brace {
             parse_expr(stream, None)
         } else {
@@ -185,7 +228,10 @@ fn parse_block(stream: &mut VecDeque<Tokens>,
         }
         body
     } else {
-        Err(format!("Parsing block got {:?} instead of a colon or brace", stream.front()))
+        Err(format!(
+            "Parsing block got {:?} instead of a colon or brace",
+            stream.front()
+        ))
     }
 }
 
@@ -195,8 +241,10 @@ fn parse_tuple(first: Ast, stream: &mut VecDeque<Tokens>) -> Result<Ast, String>
         match parse_expr(stream, None) {
             Ok(ast) => {
                 elems.push(Box::new(ast));
-                if stream.front() != Some(&Tokens::Comma) { break; }
-            },
+                if stream.front() != Some(&Tokens::Comma) {
+                    break;
+                }
+            }
             e => return e,
         }
         stream.pop_front();
@@ -259,23 +307,23 @@ fn consume(stream: &mut VecDeque<Tokens>) -> &mut VecDeque<Tokens> {
 /// Pops the front of the stream an ensures that the token is the same as the expected token
 #[macro_export]
 macro_rules! expect {
-    ($a:expr, $b:expr) => {
-        {
-            match $a.pop_front() {
-                Some(t) if t == $b => (),
-                e => return Err(format!("Parse Error: Expected {:?} but got {:?}", $b, e)),
+    ($a:expr, $b:expr) => {{
+        match $a.pop_front() {
+            Some(t) if t == $b => (),
+            e => return Err(format!("Parse Error: Expected {:?} but got {:?}", $b, e)),
+        }
+    }};
+    ($a:expr, $b:expr, $c:expr) => {{
+        match $a.pop_front() {
+            Some(t) if t == $b => (),
+            e => {
+                return Err(format!(
+                    "Parse Error: Expected {:?} but got {:?}. {:?}",
+                    $b, e, $c
+                ))
             }
         }
-
-    };
-    ($a:expr, $b:expr, $c:expr) => {
-        {
-            match $a.pop_front() {
-                Some(t) if t == $b => (),
-                e => return Err(format!("Parse Error: Expected {:?} but got {:?}. {:?}", $b, e, $c)),
-            }
-        }
-    };
+    }};
 }
 
 /// Parses a map
@@ -283,20 +331,25 @@ macro_rules! expect {
 fn parse_map(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
     let mut map = Vec::<(Ast, Ast)>::new();
     loop {
-        if stream.front() == Some(&Tokens::RBrace) { break; }
+        if stream.front() == Some(&Tokens::RBrace) {
+            break;
+        }
         let key = match parse_expr(stream, None) {
             Ok(ast) => ast,
             e => return e,
         };
-        if Some(Tokens::Colon) != stream.pop_front() { 
+        if Some(Tokens::Colon) != stream.pop_front() {
             return Err("Map missing colon after name".to_owned());
         }
         match parse_expr(stream, None) {
             Ok(val) => map.push((key, val)),
             e => return e,
         };
-        if Some(&Tokens::Comma) != stream.front() { break; }
-        else { consume(stream); }
+        if Some(&Tokens::Comma) != stream.front() {
+            break;
+        } else {
+            consume(stream);
+        }
     }
     if Some(Tokens::RBrace) != stream.pop_front() {
         Err("Map missing closing brace".to_owned())
@@ -313,13 +366,15 @@ fn parse_import(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
         }
         let mut prefix = if import.find("::*").is_some() {
             None
-        } else { Some(import.clone()) };
+        } else {
+            Some(import.clone())
+        };
         if stream.front() == Some(&Tokens::As) {
             if let Some(Tokens::Name(rename)) = consume(stream).pop_front() {
                 prefix = Some(rename);
             } else {
-                return Err("Missing name after as in import definition".to_owned())
-            }            
+                return Err("Missing name after as in import definition".to_owned());
+            }
         }
         let mut import = import.replace("::*", "").replace("::", "/");
         import.push_str(".sapl");
@@ -328,4 +383,3 @@ fn parse_import(stream: &mut VecDeque<Tokens>) -> Result<Ast, String> {
         Err("Missing module to import".to_owned())
     }
 }
-

@@ -1,19 +1,19 @@
 use crate::parser::Ast;
 use crate::parser::Op;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::cell::RefCell;
 mod environment;
 use environment::*;
-pub use environment::{Scope, Environment};
+pub use environment::{Environment, Scope};
 mod std_sapl;
 use std_sapl::type_of;
 mod exn;
 use exn::*;
 mod vals;
 pub use vals::*;
-use Res::Vl;
 use Res::Bad;
+use Res::Vl;
 mod control_flow;
 use control_flow::*;
 mod eval_bop;
@@ -33,8 +33,7 @@ pub fn evaluate(ast: &Ast) -> Res {
 /// Evaluates the ast to a value
 pub fn eval(ast: &Ast, scope: &mut impl Environment) -> Res {
     match eval_keep_all(ast, scope) {
-        Vl(Values::WeakRef(ptr, _)) => 
-            Vl(ptr.upgrade().unwrap().borrow().clone()),
+        Vl(Values::WeakRef(ptr, _)) => Vl(ptr.upgrade().unwrap().borrow().clone()),
         e => e,
     }
 }
@@ -53,13 +52,12 @@ fn eval_keep_all(ast: &Ast, scope: &mut impl Environment) -> Res {
         Ast::If(guard, body, other) => eval_if(&*guard, &*body, other, scope),
         Ast::Seq(children) => eval_seq(children, scope),
         Ast::Let(name, ast) if are_valid_names(name, scope) => eval_let(name, &*ast, scope, false),
-        Ast::Func(name, params, ast, post) if is_valid_name(name, scope) => 
-            eval_func(name, params, &*ast, post, scope, false),
-        Ast::Let(..) | Ast::Func(..) =>
-            str_exn("Cannot name a value a type name"),
+        Ast::Func(name, params, ast, post) if is_valid_name(name, scope) => {
+            eval_func(name, params, &*ast, post, scope, false)
+        }
+        Ast::Let(..) | Ast::Func(..) => str_exn("Cannot name a value a type name"),
         Ast::Lambda(params, ast) => eval_lambda(params, &*ast, scope),
-        Ast::FnApply(left, args) => 
-            eval_fn_app(&*left, args, scope),
+        Ast::FnApply(left, args) => eval_fn_app(&*left, args, scope),
         Ast::Array(elems) => eval_arr(elems, scope),
         Ast::Uop(ast, op) => eval_uop(ast, op, scope),
         Ast::Tuple(elems) => eval_tuple(elems, scope),
@@ -79,7 +77,9 @@ fn eval_keep_all(ast: &Ast, scope: &mut impl Environment) -> Res {
 /// True if all names in `names` are valid
 fn are_valid_names(names: &Vec<(String, bool)>, scope: &impl Environment) -> bool {
     for (name, _) in names {
-        if !is_valid_name(name, scope) { return false; }
+        if !is_valid_name(name, scope) {
+            return false;
+        }
     }
     true
 }
@@ -88,19 +88,28 @@ fn are_valid_names(names: &Vec<(String, bool)>, scope: &impl Environment) -> boo
 /// A valid name is not a type or meta-type name or self
 fn is_valid_name(name: &String, scope: &impl Environment) -> bool {
     match &name[..] {
-        "int" | "float" | "string" |
-        "object" | "tuple" | "array" |
-        "map" | "none" | "some" | "range" |
-        "bool" | "number" | "ref" | "self" => false,
-        _ if name.starts_with("tuple_") && 
-            name[name.find('_').unwrap() + 1..name.len()].parse::<i32>().is_ok() => false,
-    _ => {
+        "int" | "float" | "string" | "object" | "tuple" | "array" | "map" | "none" | "some"
+        | "range" | "bool" | "number" | "ref" | "self" => false,
+        _ if name.starts_with("tuple_")
+            && name[name.find('_').unwrap() + 1..name.len()]
+                .parse::<i32>()
+                .is_ok() =>
+        {
+            false
+        }
+        _ => {
             if let Some((ptr, _)) = scope.find(name) {
-                if let Values::Object(..) = &*ptr.borrow() { false }
-                else if let Values::Type(..) = &*ptr.borrow() { false }
-                else { true }
-            } else { true }
-        },
+                if let Values::RustFunc(..) = &*ptr.borrow() {
+                    false
+                } else if let Values::Type(..) = &*ptr.borrow() {
+                    false
+                } else {
+                    true
+                }
+            } else {
+                true
+            }
+        }
     }
 }
 
@@ -114,22 +123,22 @@ fn eval_ref(left: &Ast, op: &Op, scope: &mut impl Environment) -> Res {
                 } else {
                     str_exn(&format!("{}: {}", IMMU_ERR, x))
                 }
-            } else { ukn_name(x) }
-        },
-        _ => {
-            match eval_keep_all(left, scope) {
-                Vl(Values::Ref(ptr, mt)) if !mutable || mt && mutable => {
-                    Vl(Values::Ref(ptr.clone(), mutable))
-                },                
-                Vl(Values::WeakRef(ptr, mt)) if !mutable || mt => 
-                    Vl(Values::Ref(ptr.upgrade().unwrap(), mutable)),
-                Vl(rf @ Values::Ref(..)) | Vl(rf @ Values::WeakRef(..)) => 
-                    str_exn(&format!("{}: {:?}", IMMU_ERR, rf)),
-                Vl(val) => {
-                    Vl(Values::Ref(Rc::new(RefCell::new(val)), mutable))
-                },
-                e => e,
+            } else {
+                ukn_name(x)
             }
+        }
+        _ => match eval_keep_all(left, scope) {
+            Vl(Values::Ref(ptr, mt)) if !mutable || mt && mutable => {
+                Vl(Values::Ref(ptr.clone(), mutable))
+            }
+            Vl(Values::WeakRef(ptr, mt)) if !mutable || mt => {
+                Vl(Values::Ref(ptr.upgrade().unwrap(), mutable))
+            }
+            Vl(rf @ Values::Ref(..)) | Vl(rf @ Values::WeakRef(..)) => {
+                str_exn(&format!("{}: {:?}", IMMU_ERR, rf))
+            }
+            Vl(val) => Vl(Values::Ref(Rc::new(RefCell::new(val)), mutable)),
+            e => e,
         },
     }
 }
@@ -140,10 +149,10 @@ fn eval_ref(left: &Ast, op: &Op, scope: &mut impl Environment) -> Res {
 fn iter_over(start: i32, end: i32, func: &mut dyn FnMut(i32) -> Option<Res>) -> Option<Res> {
     let start = start;
     let end = end;
-    let iter = if start < end { 
+    let iter = if start < end {
         Box::new(start..end) as Box<dyn Iterator<Item = _>>
-    } else { 
-        Box::new((end.. start).rev())
+    } else {
+        Box::new((end..start).rev())
     };
     for i in iter {
         match func(i) {
@@ -156,28 +165,32 @@ fn iter_over(start: i32, end: i32, func: &mut dyn FnMut(i32) -> Option<Res>) -> 
 
 /// Adds `name` and `val` to scope
 /// `is_pub` - true if the value is exported
-fn scope_add(scope: &mut impl Environment, name: &str, val: Values, 
-    is_mut: bool, is_pub: bool) 
-{
-    let name = format!("{}{}", if is_pub {"export::"} else {""}, name);
+fn scope_add(scope: &mut impl Environment, name: &str, val: Values, is_mut: bool, is_pub: bool) {
+    let name = format!("{}{}", if is_pub { "export::" } else { "" }, name);
     scope.add(name, val, is_mut);
 }
 
 /// @see `scope_add`
 /// Adds a pointer directly
-fn scope_add_dir(scope: &mut impl Environment, name: &str, val: Rc<RefCell<Values>>, 
-    is_mut: bool, is_pub: bool) 
-{
-    let name = format!("{}{}", if is_pub {"export::"} else {""}, name);
+fn scope_add_dir(
+    scope: &mut impl Environment,
+    name: &str,
+    val: Rc<RefCell<Values>>,
+    is_mut: bool,
+    is_pub: bool,
+) {
+    let name = format!("{}{}", if is_pub { "export::" } else { "" }, name);
     scope.add_direct(name, val, is_mut);
 }
 
 /// Evaluates a let definition by adding `name` to `scope`
 /// Returns unit on success
-fn eval_let(names: &Vec<(String, bool)>, ast: &Ast, 
-    scope: &mut impl Environment, public: bool) 
-    -> Res 
-{
+fn eval_let(
+    names: &Vec<(String, bool)>,
+    ast: &Ast,
+    scope: &mut impl Environment,
+    public: bool,
+) -> Res {
     match eval(ast, scope) {
         Vl(Values::Tuple(es)) if names.len() == es.len() => {
             for (nm, v) in names.iter().zip(es.into_iter()) {
@@ -185,19 +198,19 @@ fn eval_let(names: &Vec<(String, bool)>, ast: &Ast,
                 scope_add(scope, nm, v, *is_mut, public);
             }
             Vl(Values::Unit)
-        },
+        }
         Vl(val) if names.len() == 1 => {
             let (nm, is_mut) = names.get(0).unwrap();
             scope_add(scope, nm, val, *is_mut, public);
             Vl(Values::Unit)
-        },
+        }
         Vl(Values::Range(a, b)) if names.len() == 2 => {
             let (nm1, mut1) = &names[0];
             let (nm2, mut2) = &names[1];
             scope_add(scope, nm1, *a, *mut1, public);
             scope_add(scope, nm2, *b, *mut2, public);
             Vl(Values::Unit)
-        },
+        }
         Vl(_) => str_exn(INV_DEF),
         err => err,
     }
@@ -205,17 +218,17 @@ fn eval_let(names: &Vec<(String, bool)>, ast: &Ast,
 
 /// Evaluates the unary operator `op left`
 fn eval_uop(left: &Ast, op: &Op, scope: &mut impl Environment) -> Res {
-    if op == &Op::Ref || op == &Op::MutRef { return eval_ref(left, op, scope); }
+    if op == &Op::Ref || op == &Op::MutRef {
+        return eval_ref(left, op, scope);
+    }
     perform_uop(eval(left, scope), op, scope)
 }
 
 fn perform_uop(left: Res, op: &Op, scope: &mut impl Environment) -> Res {
     match (left, op) {
         (Vl(Values::Bool(x)), Op::Not) => Vl(Values::Bool(!x)),
-        (Vl(Values::Int(x)), Op::Neg) | 
-        (Vl(Values::Int(x)), Op::Not) => Vl(Values::Int(-x)),
-        (Vl(Values::Float(x)), Op::Neg) | 
-        (Vl(Values::Float(x)), Op::Not) => Vl(Values::Float(-x)),
+        (Vl(Values::Int(x)), Op::Neg) | (Vl(Values::Int(x)), Op::Not) => Vl(Values::Int(-x)),
+        (Vl(Values::Float(x)), Op::Neg) | (Vl(Values::Float(x)), Op::Not) => Vl(Values::Float(-x)),
         (Vl(Values::Ref(x, _)), Op::Deref) => deref(x),
         (v, Op::AsBool) => match v {
             Vl(_) | Res::Ret(_) => Vl(Values::Bool(true)),
@@ -241,9 +254,7 @@ fn deref(mut ptr: Rc<RefCell<Values>>) -> Res {
 fn eval_include(path: String, scope: &mut impl Environment) -> Res {
     use std::fs;
     match fs::File::open(&path) {
-        Ok(p) => {
-            crate::parse_and_eval(p, &mut Some(scope))
-        },
+        Ok(p) => crate::parse_and_eval(p, &mut Some(scope)),
         Err(_) => str_exn(&format!("Cannot open include file {}", path)),
     }
 }
@@ -273,51 +284,54 @@ fn eval_tuple(elems: &Vec<Box<Ast>>, scope: &mut impl Environment) -> Res {
 
 /// Evaluates a map
 fn eval_map(es: &Vec<(Ast, Ast)>, scope: &mut impl Environment) -> Res {
-    let mut map = HashMap::<String, Values>::new();
+    let mut map = HashMap::<Values, Values>::new();
     for (k, v) in es {
         match (eval(k, scope), eval(v, scope)) {
-            (Vl(Values::Str(nm)), Vl(val)) => {
-                map.insert(nm, val); ()
-            },
-            (Vl(_), _) => 
-                return inv_arg("map", Some("Map keys must be strings")),
+            (Vl(key), Vl(val)) => {
+                map.insert(key, val);
+            }
+            (Vl(_), _) => return inv_arg("map", Some("Map keys must be strings")),
             (e, _) => return e,
         }
     }
-    Vl(Values::Map(Box::new(map)))
+    Vl(Values::Map(map))
 }
 
 /// Evaluates an exported definition
 fn eval_export(def: &Ast, scope: &mut impl Environment) -> Res {
     match def {
         Ast::Let(names, ast) => eval_let(&names, &*ast, scope, true),
-        Ast::Func(name, args, body, pce) => 
-            eval_func(&name, &args, &*body, &pce, scope, true),
+        Ast::Func(name, args, body, pce) => eval_func(&name, &args, &*body, &pce, scope, true),
         Ast::Struct(class) => eval_class_def(&class, scope, true),
         Ast::Type(class) => eval_type_def(&class, scope, true),
         Ast::Import(file, prefix) => eval_import(file, prefix, scope, true),
         e => str_exn(&format!(
-            "Expected an export definition following pub. Got {:?}", e)),
+            "Expected an export definition following pub. Got {:?}",
+            e
+        )),
     }
 }
 
 /// Performs free name lookup for `name`
 fn name_lookup(name: &str, scope: &impl Environment) -> Option<(Rc<RefCell<Values>>, bool)> {
-    if let Some(p) = scope.find(name) { 
-        return Some(p); 
-    } 
+    if let Some(p) = scope.find(name) {
+        return Some(p);
+    }
     if !name.contains("::") {
         if let Some(p) = scope.find(&format!("export::{}", name)) {
-            return Some(p)
-        } 
-    }  
+            return Some(p);
+        }
+    }
     None
-
-    
 }
 
 /// Imports `file` by evaluating it an copying all exported definitions into `scope`
-fn eval_import(file: &str, prefix: &Option<String>, scope: &mut impl Environment, public: bool) -> Res {    
+fn eval_import(
+    file: &str,
+    prefix: &Option<String>,
+    scope: &mut impl Environment,
+    public: bool,
+) -> Res {
     match std::fs::File::open(file) {
         Ok(file) => {
             let mut env = get_std_environment();
@@ -329,11 +343,13 @@ fn eval_import(file: &str, prefix: &Option<String>, scope: &mut impl Environment
             for (name, val, var) in v {
                 let name = if let Some(string) = prefix {
                     format!("{}::{}", string, name.replace("export::", ""))
-                } else { name };
+                } else {
+                    name
+                };
                 scope_add_dir(scope, &name, val.clone(), var, public);
             }
             Vl(Values::Unit)
-        },
+        }
         _ => str_exn(&format!("Could not open import file {}", file)),
     }
 }

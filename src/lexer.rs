@@ -1,5 +1,5 @@
-use std::io::*;
 use std::collections::VecDeque;
+use std::io::*;
 
 #[derive(PartialEq, Debug)]
 pub enum Tokens {
@@ -7,22 +7,63 @@ pub enum Tokens {
     Float(f64),
     TString(String),
     Bool(bool),
-    OpPlus, OpMinus, OpMult, OpDiv, OpMod, OpExp,
-    OpLor, OpLand, OpOr, OpAnd, OpEq, OpLt, OpGt, 
-    OpLeq, OpGeq, OpNeq, OpAssign, OpQ, OpDot,
-    OpNegate, OpRange, OpConcat,
-    LParen, RParen, LBrace, RBrace, Colon,
-    LBracket, RBracket,
+    OpPlus,
+    OpMinus,
+    OpMult,
+    OpDiv,
+    OpMod,
+    OpExp,
+    OpLor,
+    OpLand,
+    OpOr,
+    OpAnd,
+    OpEq,
+    OpLt,
+    OpGt,
+    OpLeq,
+    OpGeq,
+    OpNeq,
+    OpAssign,
+    OpQ,
+    OpDot,
+    OpNegate,
+    OpRange,
+    OpConcat,
+    LParen,
+    RParen,
+    LBrace,
+    RBrace,
+    Colon,
+    LBracket,
+    RBracket,
     OpPipeline,
-    If, Else, For, In,
+    If,
+    Else,
+    For,
+    In,
     Name(String),
-    Seq, Let,
-    Fun, Comma,
-    Return, Throw, Try, Catch,
-    Rightarrow, Var, While,
+    Seq,
+    Let,
+    Fun,
+    Comma,
+    Return,
+    Throw,
+    Try,
+    Catch,
+    Rightarrow,
+    Var,
+    While,
     Leftarrow,
-    Def, Pub, Struct,
-    As, Type, Is, Include, Import, None, Friend,
+    Def,
+    Pub,
+    Struct,
+    As,
+    Type,
+    Is,
+    Include,
+    Import,
+    None,
+    Friend,
 }
 
 /// Converts an input stream into a deque of tokens
@@ -31,15 +72,16 @@ pub fn tokenize(reader: impl Read) -> VecDeque<Tokens> {
     let mut buf = Vec::<u8>::new();
     let mut deque = VecDeque::<Tokens>::new();
     let mut fsm = TokenizerFSM::new();
-    while r.read_until(b'\n', &mut buf)
-        .expect("Failed to read from tokenizer input") != 0 
+    while r
+        .read_until(b'\n', &mut buf)
+        .expect("Failed to read from tokenizer input")
+        != 0
     {
         let mut t_line = fsm.tokenize_line(&buf).expect("Could not tokenize line");
         deque.append(&mut t_line);
         buf.clear();
     }
     deque
-    
 }
 #[derive(PartialEq, Debug, Clone, Copy)]
 enum TokenizerStates {
@@ -64,7 +106,6 @@ struct TokenizerFSM {
 }
 
 impl TokenizerFSM {
-
     pub fn new() -> TokenizerFSM {
         TokenizerFSM {
             state: TokenizerStates::Init,
@@ -86,12 +127,14 @@ impl TokenizerFSM {
 
     fn tokenize_char(&mut self, c: u8, d: &mut VecDeque<Tokens>) -> bool {
         let (next_state, tok) = self.state_transition(c);
-            self.append_to_token_stream(d, tok);                    
-            self.append_char_to_input(c, next_state);
-            self.state = next_state;
-            if self.state == TokenizerStates::ReadError { 
-                false
-            } else { true }
+        self.append_to_token_stream(d, tok);
+        self.append_char_to_input(c, next_state);
+        self.state = next_state;
+        if self.state == TokenizerStates::ReadError {
+            false
+        } else {
+            true
+        }
     }
 
     /// Adds a whitespace character to `line` to indicate the end of the line
@@ -101,96 +144,112 @@ impl TokenizerFSM {
         b
     }
 
-
     /// True if the last character read was a backslash
     fn is_input_escaped(&self) -> bool {
         let bytes = self.input.as_bytes();
         if bytes.len() >= 1 {
             bytes[bytes.len() - 1] == b'\\'
-        } else { false }
+        } else {
+            false
+        }
     }
-    
+
     /// Gets a `(next_state, token)` tuple that occurs from
     /// reading `input` from the current FSM state
     /// `next_state` is the next FSM state
     /// `token` is the token to append to the token stream or `None`
-    fn state_transition(&self, input: u8) 
-        -> (TokenizerStates, Option<Tokens>) 
-    {
+    fn state_transition(&self, input: u8) -> (TokenizerStates, Option<Tokens>) {
         match &self.state {
-            TokenizerStates::ReadComment(true) if input == b'\n' =>
-                (TokenizerStates::Init, self.done_parse_token()),
-            TokenizerStates::ReadComment(false) if input == b'*' =>
-                (TokenizerStates::ReadEndComment, self.done_parse_token()),
-            TokenizerStates::ReadEndComment if input == b'/' =>
-                (TokenizerStates::Init, self.done_parse_token()),
-            TokenizerStates::ReadEndComment => 
-                (TokenizerStates::ReadComment(false), self.done_parse_token()),
-            TokenizerStates::ReadComment(x) =>
-                (TokenizerStates::ReadComment(*x), self.done_parse_token()),
-            
-            
+            TokenizerStates::ReadComment(true) if input == b'\n' => {
+                (TokenizerStates::Init, self.done_parse_token())
+            }
+            TokenizerStates::ReadComment(false) if input == b'*' => {
+                (TokenizerStates::ReadEndComment, self.done_parse_token())
+            }
+            TokenizerStates::ReadEndComment if input == b'/' => {
+                (TokenizerStates::Init, self.done_parse_token())
+            }
+            TokenizerStates::ReadEndComment => {
+                (TokenizerStates::ReadComment(false), self.done_parse_token())
+            }
+            TokenizerStates::ReadComment(x) => {
+                (TokenizerStates::ReadComment(*x), self.done_parse_token())
+            }
+
             //lex strings
             //must be before everything else
-            TokenizerStates::ReadString(delim) if input == *delim && !self.is_input_escaped() => 
-                (TokenizerStates::Init, self.done_parse_token()),
-            TokenizerStates::ReadString(_) => (self.state, None), 
-            _ if input == b'\'' || input == b'"' => 
-                (TokenizerStates::ReadString(input), self.done_parse_token()),
+            TokenizerStates::ReadString(delim) if input == *delim && !self.is_input_escaped() => {
+                (TokenizerStates::Init, self.done_parse_token())
+            }
+            TokenizerStates::ReadString(_) => (self.state, None),
+            _ if input == b'\'' || input == b'"' => {
+                (TokenizerStates::ReadString(input), self.done_parse_token())
+            }
 
-            _ if input.is_ascii_whitespace() => 
-                (TokenizerStates::Init, self.done_parse_token()),   
+            _ if input.is_ascii_whitespace() => (TokenizerStates::Init, self.done_parse_token()),
 
             // lex numbers
-            TokenizerStates::ReadInt if input == b'.' => 
-                (TokenizerStates::ReadIntDot, None),
-            TokenizerStates::Init if input == b'-' => 
-                (TokenizerStates::ReadMinus, None),
-            TokenizerStates::ReadIntDot if input.is_ascii_digit() =>
-                (TokenizerStates::ReadFloat, None),
-            TokenizerStates::ReadFloat if input == b'.' =>
-                (TokenizerStates::ReadError, None),
-            TokenizerStates::ReadInt | TokenizerStates::ReadFloat
-                if input.is_ascii_digit() => (self.state, None),
-            TokenizerStates::ReadMinus if input.is_ascii_digit() =>
-                (TokenizerStates::ReadInt, None),
-            _ if input.is_ascii_digit() && self.state != TokenizerStates::ReadId =>
-                (TokenizerStates::ReadInt, self.done_parse_token()),
+            TokenizerStates::ReadInt if input == b'.' => (TokenizerStates::ReadIntDot, None),
+            TokenizerStates::Init if input == b'-' => (TokenizerStates::ReadMinus, None),
+            TokenizerStates::ReadIntDot if input.is_ascii_digit() => {
+                (TokenizerStates::ReadFloat, None)
+            }
+            TokenizerStates::ReadFloat if input == b'.' => (TokenizerStates::ReadError, None),
+            TokenizerStates::ReadInt | TokenizerStates::ReadFloat if input.is_ascii_digit() => {
+                (self.state, None)
+            }
+            TokenizerStates::ReadMinus if input.is_ascii_digit() => {
+                (TokenizerStates::ReadInt, None)
+            }
+            _ if input.is_ascii_digit() && self.state != TokenizerStates::ReadId => {
+                (TokenizerStates::ReadInt, self.done_parse_token())
+            }
 
-            TokenizerStates::ReadIntDot =>
-                (TokenizerFSM::state_of_input(input), self.done_parse_token()),
+            TokenizerStates::ReadIntDot => {
+                (TokenizerFSM::state_of_input(input), self.done_parse_token())
+            }
 
             // lex comments
-            TokenizerStates::ReadSlash if input == b'*' || input == b'/' =>
-                (TokenizerStates::ReadComment(input == b'/'), None),
+            TokenizerStates::ReadSlash if input == b'*' || input == b'/' => {
+                (TokenizerStates::ReadComment(input == b'/'), None)
+            }
             _ if input == b'/' => (TokenizerStates::ReadSlash, self.done_parse_token()),
 
             // lex ops
-            TokenizerStates::ReadMinus | TokenizerStates::ReadOperator
+            TokenizerStates::ReadMinus
+            | TokenizerStates::ReadOperator
             | TokenizerStates::ReadSlash
-                if TokenizerFSM::is_op_symbol(input) => 
-                    (TokenizerStates::ReadOperator, None),
-             _ if TokenizerFSM::is_op_symbol(input) =>
-                (TokenizerStates::ReadOperator, self.done_parse_token()),
+                if TokenizerFSM::is_op_symbol(input) =>
+            {
+                (TokenizerStates::ReadOperator, None)
+            }
+            _ if TokenizerFSM::is_op_symbol(input) => {
+                (TokenizerStates::ReadOperator, self.done_parse_token())
+            }
 
-            TokenizerStates::ReadId if input == b':' => 
-                (TokenizerStates::ReadId, None),
+            TokenizerStates::ReadId if input == b':' => (TokenizerStates::ReadId, None),
 
             //lex lang tokens
-            TokenizerStates::ReadLang => 
-                (TokenizerFSM::state_of_input(input), self.done_parse_token()),
-            _ if TokenizerFSM::is_lang_symbol(input) =>
-                (TokenizerStates::ReadLang, self.done_parse_token()),
+            TokenizerStates::ReadLang => {
+                (TokenizerFSM::state_of_input(input), self.done_parse_token())
+            }
+            _ if TokenizerFSM::is_lang_symbol(input) => {
+                (TokenizerStates::ReadLang, self.done_parse_token())
+            }
 
             //lex names + keys
             //must be after numbers
-            TokenizerStates::ReadId if TokenizerFSM::is_name_character(input) =>
-                (TokenizerStates::ReadId, None),
-            _ if TokenizerFSM::is_name_character(input) =>
-                (TokenizerStates::ReadId, self.done_parse_token()),
-                            
+            TokenizerStates::ReadId if TokenizerFSM::is_name_character(input) => {
+                (TokenizerStates::ReadId, None)
+            }
+            _ if TokenizerFSM::is_name_character(input) => {
+                (TokenizerStates::ReadId, self.done_parse_token())
+            }
 
-            _ => panic!("Unknown state transition: {:?} to {}", &self.state, input as char),
+            _ => panic!(
+                "Unknown state transition: {:?} to {}",
+                &self.state, input as char
+            ),
         }
     }
 
@@ -212,12 +271,9 @@ impl TokenizerFSM {
 
     /// Appends `tok` to `stream` if `tok` is not empty or the Ignore token
     /// If a token is appended, the internal token buffer is cleared
-    fn append_to_token_stream(&mut self, stream: &mut VecDeque<Tokens>, 
-        tok: Option<Tokens>)
-    {
+    fn append_to_token_stream(&mut self, stream: &mut VecDeque<Tokens>, tok: Option<Tokens>) {
         match tok {
-            Some(Tokens::Name(name)) if name.contains(':') => 
-                self.append_colon_name(name, stream),
+            Some(Tokens::Name(name)) if name.contains(':') => self.append_colon_name(name, stream),
             Some(tok) => {
                 if self.state == TokenizerStates::ReadIntDot {
                     match self.input.find('.') {
@@ -227,14 +283,13 @@ impl TokenizerFSM {
                 } else {
                     self.input.clear();
                 }
-                stream.push_back(tok)    
-            },
+                stream.push_back(tok)
+            }
             None => (),
-        } 
-
+        }
     }
 
-    /// Appends a name to the token stream that contains a colon and thus 
+    /// Appends a name to the token stream that contains a colon and thus
     /// may be a series of tokens
     /// `name` the prospective name
     /// `stream` the token stream
@@ -242,7 +297,7 @@ impl TokenizerFSM {
         let bytes = name.as_bytes();
         let mut should_be_colon = false;
         let mut last_colon = 0 as usize;
-        for i in 0 .. bytes.len() {
+        for i in 0..bytes.len() {
             if bytes[i] == b':' && !should_be_colon {
                 if last_colon > 0 {
                     return self.append_name_keep_colon(bytes, last_colon, stream);
@@ -269,12 +324,14 @@ impl TokenizerFSM {
     /// `bytes` the prospective name as a byte array
     /// `last_colon` the index of the last colon in `bytes`
     /// `stream` the token stream
-    fn append_name_keep_colon(&mut self, bytes: &[u8], last_colon: usize, 
-        stream: &mut VecDeque<Tokens>) 
-    {
+    fn append_name_keep_colon(
+        &mut self,
+        bytes: &[u8],
+        last_colon: usize,
+        stream: &mut VecDeque<Tokens>,
+    ) {
         self.append_name(&bytes[0..last_colon], stream);
-        stream.append(&mut 
-            self.tokenize_line(&bytes[last_colon..bytes.len()]).unwrap());
+        stream.append(&mut self.tokenize_line(&bytes[last_colon..bytes.len()]).unwrap());
     }
 
     /// Appends `name` to `stream` as a name
@@ -282,45 +339,51 @@ impl TokenizerFSM {
     fn append_name(&mut self, name: &[u8], stream: &mut VecDeque<Tokens>) {
         self.input = String::from_utf8(name.to_vec()).unwrap();
         stream.push_back(self.parse_cur_as_name().unwrap());
-        self.input.clear();// = String::from_utf8(vec![bytes[last_colon]]).unwrap();
-        self.state = TokenizerStates::Init;//TokenizerFSM::state_of_input(bytes[last_colon]);
+        self.input.clear(); // = String::from_utf8(vec![bytes[last_colon]]).unwrap();
+        self.state = TokenizerStates::Init; //TokenizerFSM::state_of_input(bytes[last_colon]);
     }
 
     /// Appends `c` to the input buffer it it is not a whitespace
     /// or string delimiter
     fn append_char_to_input(&mut self, c: u8, next_state: TokenizerStates) {
         match (self.state, next_state) {
-            (TokenizerStates::ReadString(delim), _) |
-            (_, TokenizerStates::ReadString(delim)) if delim == c && !self.is_input_escaped() => (),
-            (TokenizerStates::ReadString(_), _) |
-            (_, TokenizerStates::ReadString(_)) =>
-                self.input.push(c as char),
-            (TokenizerStates::ReadComment(_), _) | 
-            (TokenizerStates::ReadEndComment, _) | 
-            (_, TokenizerStates::ReadComment(_)) |
-            (_, TokenizerStates::ReadEndComment) => 
-                self.input.clear(),
-            _ if !c.is_ascii_whitespace() =>
-                self.input.push(c as char),
+            (TokenizerStates::ReadString(delim), _) | (_, TokenizerStates::ReadString(delim))
+                if delim == c && !self.is_input_escaped() =>
+            {
+                ()
+            }
+            (TokenizerStates::ReadString(_), _) | (_, TokenizerStates::ReadString(_)) => {
+                self.input.push(c as char)
+            }
+            (TokenizerStates::ReadComment(_), _)
+            | (TokenizerStates::ReadEndComment, _)
+            | (_, TokenizerStates::ReadComment(_))
+            | (_, TokenizerStates::ReadEndComment) => self.input.clear(),
+            _ if !c.is_ascii_whitespace() => self.input.push(c as char),
             _ => (),
         }
     }
 
-    /// Signals that a whitespace character has occurred and 
+    /// Signals that a whitespace character has occurred and
     /// an entire token has been read
     fn done_parse_token(&self) -> Option<Tokens> {
         match &self.state {
             TokenizerStates::ReadInt => self.parse_cur_as_int(),
             TokenizerStates::ReadFloat => self.parse_cur_as_float(),
             TokenizerStates::ReadString(_) => self.parse_cur_as_str(),
-            TokenizerStates::ReadOperator | TokenizerStates::ReadSlash 
+            TokenizerStates::ReadOperator
+            | TokenizerStates::ReadSlash
             | TokenizerStates::ReadMinus => self.parse_cur_as_op(),
             TokenizerStates::ReadLang => self.parse_cur_as_lang(),
-            TokenizerStates::Init | TokenizerStates::ReadComment(_) | 
-            TokenizerStates::ReadEndComment => None,
+            TokenizerStates::Init
+            | TokenizerStates::ReadComment(_)
+            | TokenizerStates::ReadEndComment => None,
             TokenizerStates::ReadId => self.parse_cur_as_name(),
             TokenizerStates::ReadIntDot => self.parse_int_to_dot(),
-            _ => panic!("Error converting '{}' to token in state {:?}", self.input, self.state),
+            _ => panic!(
+                "Error converting '{}' to token in state {:?}",
+                self.input, self.state
+            ),
         }
     }
 
@@ -331,7 +394,6 @@ impl TokenizerFSM {
             Err(_) => panic!("Cannot parse int: \"{}\"", &self.input),
             Ok(x) => Some(Tokens::Integer(*x)),
         }
-        
     }
 
     /// Parses everything in the current token buffer
@@ -346,10 +408,9 @@ impl TokenizerFSM {
     /// Parses the current input buffer up to the first `.` as an int
     fn parse_int_to_dot(&self) -> Option<Tokens> {
         match &self.input.find('.') {
-            Some(s) => match 
-            String::from_utf8(
-                self.input.as_bytes()[0..*s].to_vec()
-                ).unwrap().parse::<i32>() 
+            Some(s) => match String::from_utf8(self.input.as_bytes()[0..*s].to_vec())
+                .unwrap()
+                .parse::<i32>()
             {
                 Err(_) => panic!("Cannot parse int: {}", &self.input),
                 Ok(x) => Some(Tokens::Integer(x)),
@@ -370,31 +431,37 @@ impl TokenizerFSM {
     }
 
     fn str_from_escape_codes(string: String) -> Option<Tokens> {
-        use regex::Regex;
         use regex::Captures;
+        use regex::Regex;
         use std::convert::TryFrom;
-        println!("Got {}", string);
-        let string = Regex::new(r#"(\b|^|\s)\\t"#).unwrap().replace_all(&string, "\t");
-        let string = Regex::new(r#"(\b|^|\s)\\r"#).unwrap().replace_all(&string, "\r");
-        let string = Regex::new(r#"(\b|^|\s)\\n"#).unwrap().replace_all(&string, "\n");
+        //println!("Got {}", string);
+        let string = Regex::new(r#"(\b|^|\s)\\t"#)
+            .unwrap()
+            .replace_all(&string, "\t");
+        let string = Regex::new(r#"(\b|^|\s)\\r"#)
+            .unwrap()
+            .replace_all(&string, "\r");
+        let string = Regex::new(r#"(\b|^|\s)\\n"#)
+            .unwrap()
+            .replace_all(&string, "\n");
         let string = Regex::new(r#"\\\\"#).unwrap().replace_all(&string, "\\");
         let string = Regex::new(r#"\\'"#).unwrap().replace_all(&string, "'");
         let string = Regex::new(r#"\\""#).unwrap().replace_all(&string, "\"");
-        let string = Regex::new(r#"\\x([a-fA-F0-9]+)"#).unwrap().replace_all(&string, |caps: &Captures| {
-            let val = u32::from_str_radix(&caps[1], 16).unwrap();
-            format!("{}", char::try_from(val).unwrap())
-        });
+        let string =
+            Regex::new(r#"\\x([a-fA-F0-9]+)"#)
+                .unwrap()
+                .replace_all(&string, |caps: &Captures| {
+                    let val = u32::from_str_radix(&caps[1], 16).unwrap();
+                    format!("{}", char::try_from(val).unwrap())
+                });
         Some(Tokens::TString(string.to_string()))
     }
 
     /// True if `c` is a character used in operators
     fn is_op_symbol(c: u8) -> bool {
         match c {
-            b'+' | b'-' | b'&' | b'|'
-            | b'/' | b'*' | b'.' | b'%'
-            | b'^' | b'@' | b'!' | b'#'
-            | b'=' | b'~' | b'<' | b'>'
-            | b'?'  => true,
+            b'+' | b'-' | b'&' | b'|' | b'/' | b'*' | b'.' | b'%' | b'^' | b'@' | b'!' | b'#'
+            | b'=' | b'~' | b'<' | b'>' | b'?' => true,
             _ => false,
         }
     }
@@ -402,9 +469,7 @@ impl TokenizerFSM {
     /// True if `c` is a language symbol such as `()` or `{}`
     fn is_lang_symbol(c: u8) -> bool {
         match c {
-            b'(' | b')' | b'{' | b'}'
-            | b';' | b':' | b',' 
-            | b'[' | b']' => true,
+            b'(' | b')' | b'{' | b'}' | b';' | b':' | b',' | b'[' | b']' => true,
             _ => false,
         }
     }
@@ -490,5 +555,4 @@ impl TokenizerFSM {
             x => Some(Tokens::Name(x.to_owned())),
         }
     }
-    
 }

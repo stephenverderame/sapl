@@ -1,0 +1,279 @@
+/**
+ * An iterator over an array or string or anything which provides
+ * indexing (overrides `__index__` and `__len__`)
+ */
+pub struct ArrayIter {
+    def var i, arr
+
+    fun ArrayIter arr {
+        self.i = 0;
+        self.arr = arr
+    }
+
+    pub fun __next__ {
+        if self.i < self.arr.len():
+            let a = &self.arr;
+            let out = a[self.i];
+            self.i = self.i + 1;
+            out
+        else
+            None
+    }
+}
+
+/**
+ * An iterator over a range
+ */
+pub struct RangeIter {
+    def var begin, end
+
+    fun RangeIter rng {
+        if rng is int:
+            self.begin = 0;
+            self.end = rng
+        else {
+            let a, b = rng;
+            self.begin = a;
+            self.end = b;
+            if a > b {
+                self.begin = self.begin - 1;
+                self.end = self.end - 1
+            }
+        }
+    }
+
+    pub fun __next__ {
+        if self.begin != self.end {
+            if self.begin < self.end {
+                let out = self.begin;
+                self.begin = self.begin + 1;
+                out
+            } else {
+                let out = self.begin;
+                self.begin = self.begin - 1;
+                out
+            }
+        } else None
+    }
+}
+
+/**
+ * Gets an iterator for `obj`
+ * An iterator will have a `__next__` method defined
+ * Throws an exception of `obj` cannot be made into an iterator
+ */
+pub fun get_iter obj {
+    if (obj.__iter__)?:
+        obj.__iter__()
+    else if (obj.__next__)?:
+        obj
+    else if obj is array || (obj is ref && *obj is array):
+        ArrayIter(obj)
+    else if obj is range || (obj is ref && *obj is range):
+        RangeIter(obj)
+    else
+        throw "Invalid iterator object in std::iter::get_iter()"
+}
+
+/**
+ * An iterator which iterates backwards
+ */
+pub struct Rev {
+    def var arr
+    def var i
+
+    fun Rev iterable {
+        self.arr = [];
+        for e in iterable {
+            self.arr.push_back(e)
+        }
+        self.i = self.arr.len()
+    }
+
+    pub fun __next__ {
+        self.i = self.i - 1;
+        let i = self.i;
+        let arr = &self.arr;
+        if i >= 0:
+            Some(arr[i])
+        else:
+            None
+    }
+}
+
+/**
+ * An iterator that iterates over one iterator, followed by a second
+ */
+pub struct Chain {
+    def var a, var b
+
+    fun Chain a b {
+        self.a = get_iter(a);
+        self.b = get_iter(b)
+    }
+
+    pub fun __next__ {
+        let a = self.a.__next__();
+        if a is some:
+            a
+        else:
+            self.b.__next__()
+    }
+}
+
+/**
+ * An iterator that transforms each element by returning the output of the element
+ * passed to `func`
+ */
+pub struct Map {
+    def var it, func
+
+    fun Map iterable func {
+        self.it = get_iter(iterable);
+
+        // dummy first argument for `self`
+        self.func = fun (_ x) func(x)
+    }
+
+    pub fun __next__ {
+        let v = self.it.__next__();
+        if v is some:
+            self.func(v)
+        else:
+            None
+    }
+}
+
+/**
+ * An iterator which skips all elements where `func` returns false
+ */
+pub struct Filter {
+    def var it, func
+
+    fun Filter iterable func {
+        self.it = get_iter(iterable);
+
+        self.func = fun (_ x) func(x)
+    }
+
+    pub fun __next__ {
+        let var v = self.it.__next__();
+        while v is some && !self.func(v):
+            v = self.it.__next__()
+        v
+    }
+}
+
+/**
+ * An iterator which iterates over two iterators together
+ */
+pub struct Zip {
+    def var a, var b
+
+    fun Zip a b {
+        self.a = get_iter(a);
+        self.b = get_iter(b)
+    }
+
+    pub fun __next__ {
+        let a, b = (self.a.__next__(), self.b.__next__());
+        if a is some && b is some:
+            (a, b)
+        else:
+            None
+    }
+}
+
+/**
+ * An iterator which only iterates over the first `size` elements
+ */
+pub struct Take {
+    def var it, size, var i
+
+    fun Take iterable size {
+        self.i = 0;
+        self.size = size;
+        self.it = get_iter(iterable)
+    }
+
+    pub fun __next__ {
+        if self.i < self.size {
+            self.i = self.i + 1;
+            self.it.__next__()
+        } else None
+    }
+}
+
+/**
+ * An iterator which skips the first `n` elements
+ */
+pub struct Skip {
+    def var it
+
+    fun Skip iterable n {
+        self.it = get_iter(iterable);
+        for i in RangeIter(n):
+            self.it.__next__()
+    }
+
+    pub fun __iter__ {
+        self.it
+    }
+}
+
+/**
+ * An iterator which iterates by skipping every `step` elements
+ */
+pub struct Step {
+    def var it, step
+
+    fun Step iterable step {
+        self.it = get_iter(iterable);
+        self.step = step
+    }
+
+    pub fun __next__ {
+        let v = self.it.__next__();
+        if v is some {
+            for i in 0 .. self.step:
+                self.it.__next__()
+        }
+        v
+    }
+}
+
+/**
+ * An iterator which returns arrays of size `chunk_size`, grouping
+ * the wrapped iterator
+ */
+pub struct Chunks {
+    def var it, chunk
+
+    fun Chunks iterable chunk_size {
+        self.it = get_iter(iterable);
+        self.chunk = chunk_size
+    }
+
+    pub fun __next__ {
+        let var ret = [];
+        for i in 0 .. self.chunk {
+            let v = self.it.__next__();
+            if v is none && i == 0 {
+                return None
+            }
+            else ret.push_back(v)
+        }
+        ret
+    }
+}
+
+/**
+ * Converts an iterable object into an array greedily
+ */
+pub fun to_array iterable {
+    let var it = get_iter(iterable);
+    let var out = [];
+    for e in it:
+        out.push_back(e)
+    out
+}

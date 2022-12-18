@@ -1,0 +1,120 @@
+pub struct ListIter {
+    def var list
+
+    fun ListIter list {
+        self.list = list
+    }
+
+    pub fun __next__ {
+        self.list.pop()
+    }
+}
+
+/**
+ * A functional list implementation
+ */
+pub struct List {
+    def var size, var head
+
+    fun List {
+        self.size = 0;
+        self.head = fun (_) (None, None)
+    }
+
+    pub fun cons x {
+        self.size = self.size + 1;
+        // a little weird bc self.head partially applies self to head
+        let hd = self.head;
+        self.head = fun (_) (x, fun (_) hd());
+        self
+    }
+
+    pub fun hd {
+        let h, _ = self.head();
+        h
+    }
+
+    /**
+     * Removes the first element in the list
+     */
+    pub fun pop {
+        if self.head is some {
+            let h, t = self.head();
+            self.head = t;
+            self.size = self.size - 1;
+            h
+        } else None
+    }
+
+    /**
+     * Gets the `i`th element of the list or `None` if the list is not long
+     * enough
+     */
+    pub fun __index__ (var i: int) {
+        let var h, var t = self.head();
+        while i > 0 && !(t is none) {
+            let h2, t2 = t(None);
+            h = h2;
+            t = t2;
+            i = i - 1
+        }
+        if i == 0: h
+        else None
+    }
+
+    pub fun __len__ {
+        self.size
+    }
+
+    /**
+     * @param pred a predicate that takes in elements of the list and 
+     * returns a bool
+     * @returns `true` if there exists an `e` in the list such that 
+     * `pred(e)` is true
+     */
+    pub fun find pred {
+        let var h, var t = self.head();
+        while !pred(h) && !(t is none) {
+            let h2, t2 = t(None);
+            h = h2;
+            t = t2
+        }
+        !(h is none) && pred(h)
+    }
+
+    pub fun count pred {
+        let var h, var t = self.head();
+        let var count = if !(h is none) && pred(h): 1 else 0;
+        while !(t is none) {
+            let h2, t2 = t(None);
+            if !(h2 is none) && pred(h2):
+                count = count + 1
+            h = h2;
+            t = t2
+        }
+        count
+    }
+
+    pub fun into_array {
+        let var h, var t = self.head();
+        let var a = [];
+        while !(t is none) {
+            a.push_back(h);
+            let h2, t2 = t(None);
+            h = h2;
+            t = t2
+        }
+        a
+    }
+
+    pub fun __iter__ {
+        ListIter(clone(self))
+    }
+}
+
+pub fun array_to_list arr {
+    let var lst = List();
+    for i in arr.len() .. 0:
+        lst.cons(arr[i])
+    lst
+}
